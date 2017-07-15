@@ -1,0 +1,71 @@
+\documentclass[dvips,12pt]{article}
+
+% Any percent sign marks a comment to the end of the line
+
+% Every latex document starts with a documentclass declaration like this
+% The option dvips allows for graphics, 12pt is the font size, and article
+%   is the style
+
+\usepackage[pdftex]{graphicx}
+\usepackage{url}
+
+% These are additional packages for "pdflatex", graphics, and to include
+% hyperlinks inside a document.
+
+\setlength{\oddsidemargin}{0.25in}
+\setlength{\textwidth}{6.5in}
+\setlength{\topmargin}{0in}
+\setlength{\textheight}{8.5in}
+
+% These force using more of the margins that is the default style
+
+\begin{document}
+	
+	\title{Research Proposal - CiCTrie}
+	\author{Or karni \& Daniel Solomon}
+	\date{\today}
+		
+	\maketitle
+	
+	\section{Introduction}
+	
+		\textbf{CTrie}\cite{article}\cite{wiki-ctrie} (or concurrent hash-trie) is a concurrent \textit{thread-safe}, \textit{lock-free} implementation of a hash array mapped trie. This data structure is consists of \textit{key-value} pairs and it supports the following operations:
+		\begin{itemize}
+			\item \textbf{insert}: add a new \textit{(key, value)} pair.
+			\item \textbf{remove}: remove a \textit{(key, value)} pair if it exists.
+			\item \textbf{lookup}: find the \textit{value} (if any) for a specific \textit{key}. 
+		\end{itemize}
+		In addition the \textbf{CTrie} data structure has a \textit{snapshot} operation which is used to implement consistent \textit{iterators}. In fact \textbf{CTrie} is the first known concurrent data structure that supports \textit{O(1)}, \textit{atomic}, \textit{lock-free} snapshots.\\
+		The \textbf{CTrie} implementation is based on single-word \textit{compare-and-swap} instructions. 
+ 	
+	\section{Goals and Objectives}
+		\textbf{CTrie} requires dynamic memory allocation, up until now, most implementations of this data structure rely on the existence of a garbage collection mechanism in the targeted platforms. The first implementation was in \textit{Scala} by its very own author \textit{Alexander Prokopec}. Since then there were few more implementations for \textit{Java}, \textit{Go} and more. \\
+		\textbf{CiCTrie} - \textit{C implementation of \textbf{CTrie}} aims for the following objects:
+		\begin{itemize}
+			\item Implement \textbf{CTrie} in \textit{C} using \textit{hazard pointers}\cite{hazard}.
+			\item Bench mark our implementation versus the \textit{Java} implementation. 
+		\end{itemize}
+		In order to make sure our implementation is lack of memory leaks we will use the \textit{valgrind}\cite{valgrind} framework tool.
+	
+	\section{Previous Work}	
+		A quick search on the web will result a few projects that aimed to achieve our first goal, all of them are incomplete or missing memory management:
+		\begin{itemize}
+			\item \textbf{ctries}\cite{ctries} (c implementation) - \textbf{incomplete}.
+			\item \textbf{unmanaged-ctrie}\cite{unmanaged-ctrie} (c++ implementation) - \textbf{no attempt to manage memory allocation}.
+			\item \textbf{concurrent-hamt}\cite{concurrent-hamt} (Rust implementation) - The only complete implementation using hazard pointers known.
+		\end{itemize}
+		
+	\begin{thebibliography}{99}
+		\bibitem{article} Original article representing \textbf{CTrie} - \url{https://axel22.github.io/resources/docs/ctries-snapshot.pdf}. 
+		\bibitem{wiki-ctrie} \textbf{CTrie} wikipedia reference - \url{https://en.wikipedia.org/wiki/Ctrie}.
+		\bibitem{hazard} Hazard pointers wikipedia reference - \url{https://en.wikipedia.org/wiki/Hazard_pointer}.
+		\bibitem{valgrind} Valgrind home page \url{http://valgrind.org/}.
+		\bibitem{ctries} \url{https://github.com/Gustav-Simonsson/ctries}.
+		\bibitem{unmanaged-ctrie} \url{https://github.com/mthom/unmanaged-ctrie}.
+		\bibitem{concurrent-hamt} \url{https://github.com/ballard26/concurrent-hamt}.
+		
+	\end{thebibliography}
+	
+	
+	
+\end{document}
