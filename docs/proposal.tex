@@ -1,3 +1,5 @@
+% !TeX spellcheck = en_US
+
 \documentclass[dvips,12pt]{article}
 
 % Any percent sign marks a comment to the end of the line
@@ -36,16 +38,19 @@
 			\item \textbf{lookup}: find the \textit{value} (if any) for a specific \textit{key}. 
 		\end{itemize}
 		In addition the \textbf{CTrie} data structure has a \textit{snapshot} operation which is used to implement consistent \textit{iterators}. In fact \textbf{CTrie} is the first known concurrent data structure that supports \textit{O(1)}, \textit{atomic}, \textit{lock-free} snapshots.\\
+		\textbf{CTrie} aspires to preserve the space-efficiency and the expected depth of hash tries by \textit{compressing} after removals, disposing of unnecessary nodes and thus keeping the depth reasonable.\\
 		The \textbf{CTrie} implementation is based on single-word \textit{compare-and-swap} instructions. 
  	
 	\section{Goals and Objectives}
-		\textbf{CTrie} requires dynamic memory allocation, up until now, most implementations of this data structure rely on the existence of a garbage collection mechanism in the targeted platforms. The first implementation was in \textit{Scala} by its very own author \textit{Alexander Prokopec}. Since then there were few more implementations for \textit{Java}, \textit{Go} and more. \\
+	\textbf{CTrie} suffers from a memory reclamation problem and, like all CAS-based data structures, from the ABA problem. Therefore, up until now most implementations of this data structure rely on the existence of a garbage collection mechanism in the targeted platforms. The first implementation was in \textit{Scala} by its very own author \textit{Alexander Prokopec}. Since then there were few more implementations for \textit{Java}, \textit{Go} and more. \\
 		\textbf{CiCTrie} - \textit{C implementation of \textbf{CTrie}} aims for the following objects:
 		\begin{itemize}
-			\item Implement \textbf{CTrie} in \textit{C} using \textit{hazard pointers}\cite{hazard}.
+			\item Implement \textbf{CTrie} in \textit{C} using \textit{hazard pointers}\cite{hazard}\cite{wiki-hazard}.
 			\item Bench mark our implementation versus the \textit{Java} implementation. 
 		\end{itemize}
-		In order to make sure our implementation is lack of memory leaks we will use the \textit{valgrind}\cite{valgrind} framework tool.
+	\textit{Hazard pointers} are a mechanism which aims to solve the ABA and safe memory reclamation problems. Each thread maintains a list of \textit{hazard pointers} to resources it currently uses. This list usually has a fixed size and is kept small. A used resource may not be freed or modified.\\
+	% CR: "is lack of" is not proper english. We've talked about this a lot.%
+	In order to make sure our implementation has no memory leaks we will use the \textit{valgrind}\cite{valgrind} framework tool.
 	
 	\section{Previous Work}	
 		A quick search on the web will result a few projects that aimed to achieve our first goal, all of them are incomplete or missing memory management:
@@ -58,7 +63,9 @@
 	\begin{thebibliography}{99}
 		\bibitem{article} Original article representing \textbf{CTrie} - \url{https://axel22.github.io/resources/docs/ctries-snapshot.pdf}. 
 		\bibitem{wiki-ctrie} \textbf{CTrie} wikipedia reference - \url{https://en.wikipedia.org/wiki/Ctrie}.
-		\bibitem{hazard} Hazard pointers wikipedia reference - \url{https://en.wikipedia.org/wiki/Hazard_pointer}.
+		\bibitem{hazard} Original article of hazard pointers - 
+		\url{https://www.research.ibm.com/people/m/michael/ieeetpds-2004.pdf}
+		\bibitem{wiki-hazard} Hazard pointers wikipedia reference - \url{https://en.wikipedia.org/wiki/Hazard_pointer}.
 		\bibitem{valgrind} Valgrind home page \url{http://valgrind.org/}.
 		\bibitem{ctries} \url{https://github.com/Gustav-Simonsson/ctries}.
 		\bibitem{unmanaged-ctrie} \url{https://github.com/mthom/unmanaged-ctrie}.
