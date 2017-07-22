@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
+
+#include "common.h"
 #include "ctrie.h"
 
 #define NOTFOUND 0
@@ -9,10 +12,10 @@
 #define OK 0
 #define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
 
-static int  ctrie_insert(struct ctrie_t* ctrie, int key, int value);
-static int  ctrie_remove(struct ctrie_t* ctrie, int key);
-static int  ctrie_lookup(struct ctrie_t* ctrie, int key);
-static void ctrie_free  (struct ctrie_t* ctrie);
+static int  ctrie_insert(ctrie_t* ctrie, int key, int value);
+static int  ctrie_remove(ctrie_t* ctrie, int key);
+static int  ctrie_lookup(ctrie_t* ctrie, int key);
+static void ctrie_free  (ctrie_t* ctrie);
 
 static void main_node_free  (main_node_t* main_node);
 
@@ -21,8 +24,7 @@ ctrie_t* create_ctrie()
     ctrie_t* ctrie = malloc(sizeof(ctrie_t));
     if (ctrie == NULL) 
     {
-        printf("malloc failed.\n");
-        goto CLEANUP;
+        FAIL("allocating %d bytes failed", sizeof(ctrie_t));
     }
     inode_t* inode = malloc(sizeof(inode_t));
     if (inode == NULL)
@@ -37,15 +39,16 @@ ctrie_t* create_ctrie()
         goto CLEANUP;
     }
 
-    main_node->type = CNODE;
-    main_node->node.cnode = {0};
-    inode->main     = main_node;
-    ctrie->inode    = inode;
-    ctrie->readonly = 0;
-    ctrie->insert   = ctrie_insert;
-    ctrie->remove   = ctrie_remove;
-    ctrie->lookup   = ctrie_lookup;
-    ctrie->free     = ctrie_free;
+    cnode_t cnode           = {0};
+    main_node->type         = CNODE;
+    main_node->node.cnode   = cnode;
+    inode->main             = main_node;
+    ctrie->inode            = inode;
+    ctrie->readonly         = 0;
+    ctrie->insert           = ctrie_insert;
+    ctrie->remove           = ctrie_remove;
+    ctrie->lookup           = ctrie_lookup;
+    ctrie->free             = ctrie_free;
         
     return ctrie;
 
@@ -228,7 +231,7 @@ static cnode_t* cnode_insert(cnode_t* cnode, int pos, int flag, int key, int val
     branch->node.snode.key = key;
     branch->node.snode.value = value;
     memcpy(new_cnode, cnode, sizeof(cnode_t));
-    new_cnode->bmp = new_cnode.bmp | flag;
+    new_cnode->bmp = new_cnode->bmp | flag;
     new_cnode->array[pos] = branch;
     
     return new_cnode;
@@ -255,7 +258,7 @@ static cnode_t* cnode_update(cnode_t* cnode, int pos, int key, int value)
         goto CLEANUP;
     }
     new_branch->type = SNODE;
-    new_branch->node.snode = {
+    new_branch->node.snode = (snode_t) {
         .key    = key,
         .value  = value,
     };
@@ -370,7 +373,13 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         return NOTFOUND;
     }
 }
+
 static int ctrie_insert(ctrie_t* ctrie, int key, int value)
 {
-        
+    return FAILED;
+}
+
+static int ctrie_remove(ctrie_t* ctrie, int key)
+{
+    return FAILED;
 }
