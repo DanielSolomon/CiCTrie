@@ -12,6 +12,4 @@ set(SOURCE_FILES
 
 include_directories(inc)
 
-#set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ".")
-
 add_executable(code ${SOURCE_FILES})

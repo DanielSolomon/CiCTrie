@@ -17,6 +17,8 @@ static int  ctrie_remove(ctrie_t* ctrie, int key);
 static int  ctrie_lookup(ctrie_t* ctrie, int key);
 static void ctrie_free  (ctrie_t* ctrie);
 
+static void lnode_free(lnode_t* lnode);
+
 static void main_node_free  (main_node_t* main_node);
 
 ctrie_t* create_ctrie()

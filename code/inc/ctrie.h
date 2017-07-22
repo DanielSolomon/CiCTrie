@@ -4,7 +4,7 @@
 
 typedef struct ctrie_t
 {
-    inode_t*  inode;
+    inode_t* inode;
     uint8_t  readonly;
     int      (*insert) (struct ctrie_t* ctrie, int key, int value);
     int      (*remove) (struct ctrie_t* ctrie, int key);
