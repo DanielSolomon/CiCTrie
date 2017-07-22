@@ -58,3 +58,7 @@ dkms.conf
 
 # Vim swap files
 *.swp
+
+# CLion shit
+*/cmake-build-debug/*
+*/.idea/*
