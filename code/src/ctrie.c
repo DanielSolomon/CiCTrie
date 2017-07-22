@@ -3,8 +3,11 @@
 #include <stdint.h>
 #include "ctrie.h"
 
-#define RESTART -1
 #define NOTFOUND 0
+#define RESTART -1
+#define FAILED -2
+#define OK 0
+#define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
 
 static int  ctrie_insert(struct ctrie_t* ctrie, int key, int value);
 static int  ctrie_remove(struct ctrie_t* ctrie, int key);
@@ -27,7 +30,16 @@ ctrie_t* create_ctrie()
         printf("malloc failed.\n");
         goto CLEANUP;
     }
-    inode->main     = NULL;
+    main_node_t* main_node = malloc(sizeof(main_node_t));
+    if (main_node == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+
+    main_node->type = CNODE;
+    main_node->node.cnode = {0};
+    inode->main     = main_node;
     ctrie->inode    = inode;
     ctrie->readonly = 0;
     ctrie->insert   = ctrie_insert;
@@ -41,6 +53,10 @@ CLEANUP:
     if (ctrie != NULL)
     {
         free(ctrie);
+    }
+    if (inode != NULL)
+    {
+        free(inode);
     }
     return NULL;
 }
@@ -178,7 +194,8 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
     case LNODE:
         return lnode_lookup(&(inode->main->node.lnode), key);
     default:
-        break;
+        // TODO Dafuq?
+        return NOTFOUND;
     }
 }
 
@@ -190,4 +207,170 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
     }
     while (res == RESTART);
     return  res;
+}
+
+static cnode_t* cnode_insert(cnode_t* cnode, int pos, int flag, int key, int value)
+{
+    branch_t* branch = malloc(sizeof(branch_t));
+    if (branch == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+    cnode_t* new_cnode = malloc(sizeof(cnode_t));
+    if (new_cnode == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+
+    branch->type = SNODE;
+    branch->node.snode.key = key;
+    branch->node.snode.value = value;
+    memcpy(new_cnode, cnode, sizeof(cnode_t));
+    new_cnode->bmp = new_cnode.bmp | flag;
+    new_cnode->array[pos] = branch;
+    
+    return new_cnode;
+CLEANUP:
+    if (branch != NULL)
+    {
+        free(branch);
+    }
+    return NULL;
+}
+
+static cnode_t* cnode_update(cnode_t* cnode, int pos, int key, int value)
+{
+    branch_t* new_branch = malloc(sizeof(branch_t));
+    if (new_branch == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+    cnode_t* new_cnode = malloc(sizeof(cnode_t));
+    if (new_cnode == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+    new_branch->type = SNODE;
+    new_branch->node.snode = {
+        .key    = key,
+        .value  = value,
+    };
+    memcpy(new_cnode, cnode, sizeof(cnode_t));
+    new_cnode->array[pos] = new_branch;
+
+    return new_cnode;
+
+CLEANUP:
+    if (new_branch != NULL)
+    {
+        free(new_branch);
+    }
+    return NULL;
+}
+
+static inode_t* create_inode(int lev, snode_t* old_snode, snode_t* new_snode)
+{
+    cnode_t*  cnode  = NULL;
+    branch_t* branch = NULL;
+    lnode_t*  lnode  = NULL;
+    inode_t* inode = malloc(sizeof(inode_t));
+    if (inode == NULL)
+    {
+        printf("malloc failed.\n");
+        goto CLEANUP;
+    }
+
+    if (lev < MAX_BRANCHES) 
+    {
+        cnode = malloc(sizeof(cnode_t));
+        if (cnode == NULL)
+        {
+            printf("malloc failed.\n");
+            goto CLEANUP;
+        }
+    }
+
+CLEANUP:
+    return NULL;
+}
+
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent)
+{
+    if (inode->main == NULL)
+    {
+        return FAILED;
+    }
+
+    int pos  = 0;
+    int flag = 0;
+    branch_t* branch = NULL;
+    cnode_t* cnode = NULL;
+    switch(inode->main->type)
+    {
+    case CNODE:
+        cnode = &(inode->main->node.cnode);
+        pos = (hash(key) >> lev) & 0x1f;
+        flag = 1 << pos;
+        if ((flag & cnode->bmp) == 0)
+        {
+            cnode_t* new_cnode = cnode_insert(cnode, pos, flag, key, value);
+            if (new_cnode == NULL)
+            {
+                return FAILED;
+            }
+            if (CAS(&(inode->main), cnode, new_cnode))
+            {
+                return OK;
+            }
+            else
+            {
+                return RESTART;
+            }
+        }
+        branch = inode->main->node.cnode.array[pos];
+        switch (branch->type)
+        {
+        case INODE:
+            return internal_insert(&(branch->node.inode), key, value, lev + W, inode);
+        case SNODE:
+            if (key == branch->node.snode.key)
+            {
+                cnode_t* new_cnode = cnode_update(cnode, pos, key, value);
+                if (new_cnode == NULL)
+                {
+                    return FAILED;
+                }
+                if (CAS(&(inode->main), cnode, new_cnode))
+                {
+                    return OK;
+                }
+                else
+                {
+                    return RESTART;
+                }
+            }
+            else 
+            {
+                
+            }
+        default:
+            break;
+        }
+    case TNODE:
+        clean(parent, lev - W);
+        return RESTART;
+    case LNODE:
+        return lnode_lookup(&(inode->main->node.lnode), key);
+    default:
+        // TODO Dafuq?
+        return NOTFOUND;
+    }
+}
+static int ctrie_insert(ctrie_t* ctrie, int key, int value)
+{
+        
 }
