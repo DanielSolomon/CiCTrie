@@ -1,8 +1,10 @@
 #pragma once
 #include <stdint.h>
 
+#define W 5
 // The maximun number of branches going out of a CNode. Must match the bitmap size.
-#define MAX_BRANCHES 32
+#define MAX_BRANCHES (2 << W)
+
 
 typedef struct main_node_t main_node_t;
 
