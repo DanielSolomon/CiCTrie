@@ -6,6 +6,8 @@
 #define MAX_BRANCHES (2 << W)
 
 
+// TODO Consider change all complicated objects to pointers (for efficiency [copy by value] and generalizing cases).
+
 typedef struct main_node_t main_node_t;
 
 typedef enum 

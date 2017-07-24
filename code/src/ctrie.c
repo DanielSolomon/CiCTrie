@@ -143,6 +143,7 @@ static void inode_free(inode_t* inode)
     }
 }
 
+// TODO Consider making ctrie_free thread-safe by a single mutex only for integrity of the code.
 /**
  * Frees the entire ctrie
  * NOTE: not thread-safe.
