@@ -66,6 +66,10 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Frees `branch` and all it's decendants.
+ * NOTE: not thread-safe.
+ */
 static void branch_free(branch_t* branch)
 {
     if (branch != NULL)
@@ -84,6 +88,10 @@ static void branch_free(branch_t* branch)
     }
 }
 
+/**
+ * Frees the lnode-list beginning with `lnode`.
+ * NOTE: not thread-safe.
+ */
 static void lnode_free(lnode_t* lnode)
 {
     if (lnode != NULL)
@@ -93,6 +101,10 @@ static void lnode_free(lnode_t* lnode)
     }
 }
 
+/**
+ * Frees `main_node` and all it's decendants
+ * NOTE: not thread-safe.
+ */
 static void main_node_free(main_node_t* main_node)
 {
     int i = 0;
@@ -117,6 +129,11 @@ static void main_node_free(main_node_t* main_node)
         free(main_node);
     }
 }
+
+/**
+ * Frees `inode` and all it's decendants
+ * NOTE: not thread-safe.
+ */
 static void inode_free(inode_t* inode)
 {
     if (inode != NULL)
@@ -126,6 +143,10 @@ static void inode_free(inode_t* inode)
     }
 }
 
+/**
+ * Frees the entire ctrie
+ * NOTE: not thread-safe.
+ */
 static void ctrie_free(ctrie_t* ctrie)
 {
     if (ctrie != NULL) 
@@ -135,6 +156,10 @@ static void ctrie_free(ctrie_t* ctrie)
     }
 }
 
+/**
+ * Searches for `key` in the lnode-list beginning with `lnode`.
+ * Returns the value if found, else returns NOTFOUND.
+ */
 static int lnode_lookup(lnode_t* lnode, int key)
 {
     lnode_t* ptr = lnode;
@@ -160,6 +185,10 @@ static void clean(inode_t* inode, int lev)
     // TODO
 }
 
+/**
+ * Searches for `key` in `inode`'s decendants.
+ * Returns the value if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
+ */
 static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
 {
     if (inode->main == NULL)
@@ -170,11 +199,15 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
     int pos  = 0;
     int flag = 0;
     branch_t* branch = NULL;
+
+    // Check the inode's child.
     switch(inode->main->type)
     {
     case CNODE:
+        // CNode - compute the branch with the relevant hash bits and search in it.
         pos = (hash(key) >> lev) & 0x1f;
         flag = 1 << pos;
+        // Check if the branch is empty.
         if ((flag & inode->main->node.cnode.bmp) == 0)
         {
             return NOTFOUND;
@@ -183,8 +216,10 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
         switch (branch->type)
         {
         case INODE:
+            // INode - recursively lookup.
             return internal_lookup(&(branch->node.inode), key, lev + W, inode);
         case SNODE:
+            // SNode - simply compare the keys.
             if (key == branch->node.snode.key)
             {
                 return branch->node.snode.value;
@@ -194,9 +229,11 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
             break;
         }
     case TNODE:
+        // TNode - help resurrect it and restart.
         clean(parent, lev - W);
         return RESTART;
     case LNODE:
+        // LNode - search the linked list.
         return lnode_lookup(&(inode->main->node.lnode), key);
     default:
         // TODO Dafuq?
@@ -204,6 +241,10 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
     }
 }
 
+/**
+ * Searches for `key` in the ctrie.
+ * Returns the value if found, else returns NOTFOUND.
+ */
 static int ctrie_lookup(struct ctrie_t* ctrie, int key)
 {
     int res = RESTART;
@@ -214,6 +255,10 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
     return  res;
 }
 
+/**
+ * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
+ * Returns the created CNode if successful, else returns NULL.
+ */
 static cnode_t* cnode_insert(cnode_t* cnode, int pos, int flag, int key, int value)
 {
     branch_t* branch = malloc(sizeof(branch_t));
@@ -245,6 +290,11 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Creates a copy of `cnode`, but updated the branch in position `pos` to an SNode of (`key`, `value`).
+ * Returns the created CNode if successful, else returns NULL.
+ * TODO This is very similar to cnode_insert...
+ */
 static cnode_t* cnode_update(cnode_t* cnode, int pos, int key, int value)
 {
     branch_t* new_branch = malloc(sizeof(branch_t));
@@ -303,6 +353,10 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Attempts to insert (`key`, `value`) to the subtree of `inode`.
+ * Returns OK if successful, FAILED if an error occured or RESTART if the insert should be called again.
+ */
 static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent)
 {
     if (inode->main == NULL)
@@ -314,14 +368,18 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
     int flag = 0;
     branch_t* branch = NULL;
     cnode_t* cnode = NULL;
+    // Check the inode's child.
     switch(inode->main->type)
     {
     case CNODE:
+        // CNode - compute the branch with the relevant hash bits and insert in it.
         cnode = &(inode->main->node.cnode);
         pos = (hash(key) >> lev) & 0x1f;
         flag = 1 << pos;
+        // Check if the branch is empty.
         if ((flag & cnode->bmp) == 0)
         {
+            // If so, simply create a new branch to an SNode and insert it.
             cnode_t* new_cnode = cnode_insert(cnode, pos, flag, key, value);
             if (new_cnode == NULL)
             {
@@ -336,10 +394,12 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 return RESTART;
             }
         }
+        // Check the branch.
         branch = inode->main->node.cnode.array[pos];
         switch (branch->type)
         {
         case INODE:
+            // INode - recursively insert.
             return internal_insert(&(branch->node.inode), key, value, lev + W, inode);
         case SNODE:
             if (key == branch->node.snode.key)
@@ -366,19 +426,27 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             break;
         }
     case TNODE:
-        clean(parent, lev - W);
-        return RESTART;
+        //TODO
     case LNODE:
-        return lnode_lookup(&(inode->main->node.lnode), key);
+        //TODO
     default:
         // TODO Dafuq?
-        return NOTFOUND;
+        return FAILED;
     }
 }
 
+/**
+ * Attempts to insert (`key`, `value`) to the ctrie.
+ * Returns OK if successful or FAILED if an error occured.
+ */
 static int ctrie_insert(ctrie_t* ctrie, int key, int value)
 {
-    return FAILED;
+    int res = RESTART;
+    do {
+        res = internal_insert(ctrie->inode, key, value, 0, NULL);
+    }
+    while (res == RESTART);
+    return  res;
 }
 
 static int ctrie_remove(ctrie_t* ctrie, int key)
