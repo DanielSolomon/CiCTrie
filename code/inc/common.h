@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #define MESSAGE_SIZE (4096)
 
@@ -12,3 +13,12 @@
     PRINT(fmt, ##__VA_ARGS__);  \
     goto CLEANUP;               \
 } while (0)   
+
+#define MALLOC(var, type) do {                              \
+    var = malloc(sizeof(type));                             \
+    if (var == NULL)                                        \
+    {                                                       \
+        FAIL("failed allocating %d bytes", sizeof(type));   \
+    }                                                       \
+} while (0);
+    

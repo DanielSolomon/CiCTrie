@@ -6,11 +6,29 @@
 #include "common.h"
 #include "ctrie.h"
 
-#define NOTFOUND 0
+#define NOTFOUND (0)
 #define RESTART -1
 #define FAILED -2
 #define OK 0
 #define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
+
+/*
+#define CAS_IT(node, msg) do {  \
+    
+                if (new_main_node == NULL)
+                {
+                    return FAILED;
+                }
+                if (CAS(&(inode->main), main_node, new_main_node))
+                {
+                    return OK;
+                }
+                else
+                {
+                    main_node_free(new_main_node);
+                    return RESTART;
+                }
+*/
 
 static int  ctrie_insert(ctrie_t* ctrie, int key, int value);
 static int  ctrie_remove(ctrie_t* ctrie, int key);
@@ -51,7 +69,6 @@ ctrie_t* create_ctrie()
     ctrie->remove           = ctrie_remove;
     ctrie->lookup           = ctrie_lookup;
     ctrie->free             = ctrie_free;
-        
     return ctrie;
 
 CLEANUP:
@@ -260,33 +277,31 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
  * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
  * Returns the created CNode if successful, else returns NULL.
  */
-static cnode_t* cnode_insert(cnode_t* cnode, int pos, int flag, int key, int value)
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value)
 {
-    branch_t* branch = malloc(sizeof(branch_t));
-    if (branch == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
-    cnode_t* new_cnode = malloc(sizeof(cnode_t));
-    if (new_cnode == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
+    main_node_t* new_main_node = NULL;
+    branch_t* branch = NULL;
+    MALLOC(branch, branch_t);
+    MALLOC(new_main_node, main_node_t);
 
     branch->type = SNODE;
     branch->node.snode.key = key;
     branch->node.snode.value = value;
-    memcpy(new_cnode, cnode, sizeof(cnode_t));
-    new_cnode->bmp = new_cnode->bmp | flag;
-    new_cnode->array[pos] = branch;
+
+    new_main_node->type = CNODE;
+    new_main_node->node.cnode = main_node->node.cnode;
+    new_main_node->node.cnode.bmp |= flag;
+    new_main_node->node.cnode.array[pos] = branch;
     
-    return new_cnode;
+    return new_main_node;
 CLEANUP:
     if (branch != NULL)
     {
         free(branch);
+    }
+    if (new_main_node != NULL)
+    {
+        free(new_main_node);
     }
     return NULL;
 }
@@ -296,61 +311,138 @@ CLEANUP:
  * Returns the created CNode if successful, else returns NULL.
  * TODO This is very similar to cnode_insert...
  */
-static cnode_t* cnode_update(cnode_t* cnode, int pos, int key, int value)
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value)
 {
-    branch_t* new_branch = malloc(sizeof(branch_t));
-    if (new_branch == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
-    cnode_t* new_cnode = malloc(sizeof(cnode_t));
-    if (new_cnode == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
-    new_branch->type = SNODE;
-    new_branch->node.snode = (snode_t) {
-        .key    = key,
-        .value  = value,
-    };
-    memcpy(new_cnode, cnode, sizeof(cnode_t));
-    new_cnode->array[pos] = new_branch;
+    // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
+    return cnode_insert(main_node, pos, 0, key, value);
+}
 
-    return new_cnode;
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
+{
+    main_node_t* new_main_node = NULL;
+    MALLOC(new_main_node, main_node_t);
+
+    new_main_node->type = CNODE;
+    new_main_node->node.cnode = main_node->node.cnode;
+    new_main_node->node.cnode.array[pos] = branch;
+    
+    return new_main_node;
 
 CLEANUP:
-    if (new_branch != NULL)
+    if (new_main_node != NULL)
     {
-        free(new_branch);
+        free(new_main_node);
     }
     return NULL;
 }
 
-static inode_t* create_inode(int lev, snode_t* old_snode, snode_t* new_snode)
+static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
 {
-    cnode_t*  cnode  = NULL;
     branch_t* branch = NULL;
-    lnode_t*  lnode  = NULL;
-    inode_t* inode = malloc(sizeof(inode_t));
-    if (inode == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
+    branch_t* child  = NULL;
+    branch_t* sibling1 = NULL;
+    branch_t* sibling2 = NULL;
+    lnode_t*  next   = NULL;
+    main_node_t* main_node = NULL;
+
+    MALLOC(main_node, main_node_t);
+    MALLOC(branch, branch_t);
 
     if (lev < MAX_BRANCHES) 
     {
-        cnode = malloc(sizeof(cnode_t));
-        if (cnode == NULL)
+        cnode_t cnode = {0};
+        int pos1 = (hash(old_snode->key) >> lev) & 0x1f;
+        int pos2 = (hash(new_snode->key) >> lev) & 0x1f;
+        if (pos1 == pos2)
         {
-            printf("malloc failed.\n");
-            goto CLEANUP;
+            child = create_branch(lev + W, old_snode, new_snode);
+            if (child == NULL)
+            {
+                FAIL("failed to create child branch");
+            }
+            cnode.array[pos1] = child;
         }
+        else 
+        {
+            MALLOC(sibling1, branch_t);
+            MALLOC(sibling2, branch_t);
+            sibling1->type = SNODE;
+            sibling2->type = SNODE;
+            sibling1->node.snode = *old_snode;
+            sibling2->node.snode = *new_snode;
+            cnode.array[pos1] = sibling1;
+            cnode.array[pos2] = sibling2;
+        }
+        cnode.bmp = (1 << pos1) | (1 << pos2);
+        main_node->type = CNODE;
+        main_node->node.cnode = cnode;
+    }
+    else
+    {
+        MALLOC(next, lnode_t);
+        next->snode = *new_snode;
+        main_node->type = LNODE;
+        main_node->node.lnode.snode  = *old_snode;
+        main_node->node.lnode.next   = next;
     }
 
+    branch->type = INODE;
+    branch->node.inode.main = main_node;
+    return branch;
+
 CLEANUP:
+    if (next != NULL)
+    {
+        free(next);
+    }
+    if (main_node != NULL)
+    {
+        free(main_node);
+    }
+    if (branch != NULL)
+    {
+        free(branch);
+    }
+    if (child  != NULL)
+    {
+        free(child);
+    }
+    if (sibling1 != NULL)
+    {
+        free(sibling1);
+    }
+    if (sibling2 != NULL)
+    {
+        free(sibling2);
+    }
+    return NULL;
+}
+
+static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode)
+{
+    main_node_t* new_main_node = NULL;
+    lnode_t* next = NULL;
+    MALLOC(new_main_node, main_node_t);
+    MALLOC(next, lnode_t);
+
+    next->snode = main_node->node.lnode.snode;
+    next->next = main_node->node.lnode.next;
+
+    new_main_node->type = LNODE;
+    new_main_node->node.lnode.snode = *snode;
+    new_main_node->node.lnode.next = next;
+
+    return new_main_node;
+
+CLEANUP:
+    if (new_main_node != NULL)
+    {
+        free(new_main_node);
+    }
+    if (next != NULL)
+    {
+        free(next);
+    }
     return NULL;
 }
 
@@ -368,35 +460,37 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
     int pos  = 0;
     int flag = 0;
     branch_t* branch = NULL;
-    cnode_t* cnode = NULL;
+    main_node_t* main_node = NULL;
+    branch_t* child = NULL;
     // Check the inode's child.
-    switch(inode->main->type)
+    main_node = inode->main;
+    switch(main_node->type)
     {
     case CNODE:
         // CNode - compute the branch with the relevant hash bits and insert in it.
-        cnode = &(inode->main->node.cnode);
         pos = (hash(key) >> lev) & 0x1f;
         flag = 1 << pos;
         // Check if the branch is empty.
-        if ((flag & cnode->bmp) == 0)
+        if ((flag & main_node->node.cnode.bmp) == 0)
         {
             // If so, simply create a new branch to an SNode and insert it.
-            cnode_t* new_cnode = cnode_insert(cnode, pos, flag, key, value);
-            if (new_cnode == NULL)
+            main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value);
+            if (new_main_node == NULL)
             {
                 return FAILED;
             }
-            if (CAS(&(inode->main), cnode, new_cnode))
+            if (CAS(&(inode->main), main_node, new_main_node))
             {
                 return OK;
             }
             else
             {
+                main_node_free(new_main_node);
                 return RESTART;
             }
         }
         // Check the branch.
-        branch = inode->main->node.cnode.array[pos];
+        branch = main_node->node.cnode.array[pos];
         switch (branch->type)
         {
         case INODE:
@@ -405,35 +499,80 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         case SNODE:
             if (key == branch->node.snode.key)
             {
-                cnode_t* new_cnode = cnode_update(cnode, pos, key, value);
-                if (new_cnode == NULL)
+                main_node_t* new_main_node = cnode_update(main_node, pos, key, value);
+                if (new_main_node == NULL)
                 {
-                    return FAILED;
+                    FAIL("Failed to update cnode");
                 }
-                if (CAS(&(inode->main), cnode, new_cnode))
+                if (CAS(&(inode->main), main_node, new_main_node))
                 {
                     return OK;
                 }
                 else
                 {
+                    main_node_free(new_main_node);
                     return RESTART;
                 }
             }
             else 
             {
-                
+                snode_t new_snode = { .key = key, .value = value };
+                child = create_branch(lev, &(branch->node.snode), &new_snode);
+                if (child == NULL)
+                {
+                    return FAILED;
+                }
+                main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
+                if (new_main_node == NULL)
+                {
+                    FAIL("Failed to update cnode branch");
+                }
+
+                if (CAS(&(inode->main), main_node, new_main_node))
+                {
+                    return OK;
+                }
+                else
+                {
+                    main_node_free(new_main_node);
+                    return RESTART;
+                }
             }
         default:
             break;
         }
     case TNODE:
         //TODO
+        break;
     case LNODE:
-        //TODO
+    {
+        snode_t new_snode = { .key = key, .value = value };
+        main_node_t* new_main_node = lnode_insert(main_node, &new_snode);
+        if (NULL == new_main_node)
+        {
+            FAIL("failed to insert to lnode list");
+        }
+        if (CAS(&(inode->main), main_node, new_main_node))
+        {
+            return OK;
+        }
+        else
+        {
+            main_node_free(new_main_node);
+            return RESTART;
+        }
+    }
     default:
         // TODO Dafuq?
         return FAILED;
     }
+
+CLEANUP:
+    if (child != NULL)
+    {
+        branch_free(child);
+    }
+    return FAILED;
 }
 
 /**
