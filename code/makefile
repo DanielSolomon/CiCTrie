@@ -1,10 +1,10 @@
 CC          := gcc
-CFLAGS      := -Wall
+CFLAGS      := -Wall -Wno-format-security
 PROJ_DIR    := $(shell dirname $(shell pwd))
 NAME        := $(shell basename $(PROJ_DIR))
 
-INC_FILES   := $(shell find $(PROJ_DIR) -name *.h)
-SRC_FILES   := $(shell find $(PROJ_DIR) -name *.c)
+INC_FILES   := $(shell find $(PROJ_DIR)/code/inc -name *.h)
+SRC_FILES   := $(shell find $(PROJ_DIR)/code/src -name *.c)
 
 INC_DIRS    := $(addprefix -I, $(sort $(dir $(INC_FILES))))
 
