@@ -8,7 +8,8 @@ set(SOURCE_FILES
         inc/ctrie.h
         inc/nodes.h
         src/ctrie.c
-        src/main.c)
+        src/main.c
+        src/common.c)
 
 include_directories(inc)
 

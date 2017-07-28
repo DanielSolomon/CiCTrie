@@ -72,14 +72,7 @@ ctrie_t* create_ctrie()
     return ctrie;
 
 CLEANUP:
-    if (ctrie != NULL)
-    {
-        free(ctrie);
-    }
-    if (inode != NULL)
-    {
-        free(inode);
-    }
+    free_them_all(2, ctrie, inode);
     return NULL;
 }
 
@@ -295,14 +288,7 @@ static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int 
     
     return new_main_node;
 CLEANUP:
-    if (branch != NULL)
-    {
-        free(branch);
-    }
-    if (new_main_node != NULL)
-    {
-        free(new_main_node);
-    }
+    free_them_all(2, branch, new_main_node);
     return NULL;
 }
 
@@ -391,30 +377,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
     return branch;
 
 CLEANUP:
-    if (next != NULL)
-    {
-        free(next);
-    }
-    if (main_node != NULL)
-    {
-        free(main_node);
-    }
-    if (branch != NULL)
-    {
-        free(branch);
-    }
-    if (child  != NULL)
-    {
-        free(child);
-    }
-    if (sibling1 != NULL)
-    {
-        free(sibling1);
-    }
-    if (sibling2 != NULL)
-    {
-        free(sibling2);
-    }
+    free_them_all(6, next, main_node, branch, child, sibling1, sibling2);
     return NULL;
 }
 
@@ -435,14 +398,7 @@ static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode)
     return new_main_node;
 
 CLEANUP:
-    if (new_main_node != NULL)
-    {
-        free(new_main_node);
-    }
-    if (next != NULL)
-    {
-        free(next);
-    }
+    free_them_all(2, new_main_node, next);
     return NULL;
 }
 

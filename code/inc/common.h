@@ -1,5 +1,8 @@
+#pragma once
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #define MESSAGE_SIZE (4096)
 
@@ -21,4 +24,6 @@
         FAIL("failed allocating %d bytes", sizeof(type));   \
     }                                                       \
 } while (0);
-    
+
+void free_them_all(int count, ...);
+
