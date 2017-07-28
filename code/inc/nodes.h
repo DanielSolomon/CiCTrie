@@ -55,6 +55,7 @@ typedef struct
 typedef struct
 {
     uint32_t bmp;
+    uint32_t length;
     branch_t* array[MAX_BRANCHES];
 } cnode_t;
 
