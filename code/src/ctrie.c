@@ -6,29 +6,18 @@
 #include "common.h"
 #include "ctrie.h"
 
+/*************
+ * CONSTANTS *
+ *************/
+
 #define NOTFOUND (0)
 #define RESTART -1
 #define FAILED -2
 #define OK 0
-#define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
 
-/*
-#define CAS_IT(node, msg) do {  \
-    
-                if (new_main_node == NULL)
-                {
-                    return FAILED;
-                }
-                if (CAS(&(inode->main), main_node, new_main_node))
-                {
-                    return OK;
-                }
-                else
-                {
-                    main_node_free(new_main_node);
-                    return RESTART;
-                }
-*/
+/*************************
+ * Functions Declaration *
+ *************************/
 
 static int  ctrie_insert(ctrie_t* ctrie, int key, int value);
 static int  ctrie_remove(ctrie_t* ctrie, int key);
@@ -36,8 +25,23 @@ static int  ctrie_lookup(ctrie_t* ctrie, int key);
 static void ctrie_free  (ctrie_t* ctrie);
 
 static void lnode_free(lnode_t* lnode);
+static void main_node_free(main_node_t* main_node);
 
-static void main_node_free  (main_node_t* main_node);
+/*******************
+ * MACRO FUNCTIONS *
+ *******************/
+
+#define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
+#define CAS_IT(CASed, old, new, msg) do {   \
+    if (new == NULL)                        \
+        FAIL(msg);                          \
+    if (CAS(CASed, old, new))               \
+        return OK;                          \
+    else {                                  \
+        main_node_free(new);                \
+        return RESTART;                     \
+    }                                       \
+} while (0)
 
 ctrie_t* create_ctrie()
 {
@@ -431,19 +435,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         {
             // If so, simply create a new branch to an SNode and insert it.
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value);
-            if (new_main_node == NULL)
-            {
-                return FAILED;
-            }
-            if (CAS(&(inode->main), main_node, new_main_node))
-            {
-                return OK;
-            }
-            else
-            {
-                main_node_free(new_main_node);
-                return RESTART;
-            }
+            CAS_IT(&(inode->main), main_node, new_main_node, "Failed to insert into cnode");
         }
         // Check the branch.
         branch = main_node->node.cnode.array[pos];
@@ -456,19 +448,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             if (key == branch->node.snode.key)
             {
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value);
-                if (new_main_node == NULL)
-                {
-                    FAIL("Failed to update cnode");
-                }
-                if (CAS(&(inode->main), main_node, new_main_node))
-                {
-                    return OK;
-                }
-                else
-                {
-                    main_node_free(new_main_node);
-                    return RESTART;
-                }
+                CAS_IT(&(inode->main), main_node, new_main_node, "Failed to update cnode");
             }
             else 
             {
@@ -479,20 +459,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                     return FAILED;
                 }
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
-                if (new_main_node == NULL)
-                {
-                    FAIL("Failed to update cnode branch");
-                }
-
-                if (CAS(&(inode->main), main_node, new_main_node))
-                {
-                    return OK;
-                }
-                else
-                {
-                    main_node_free(new_main_node);
-                    return RESTART;
-                }
+                CAS_IT(&(inode->main), main_node, new_main_node, "Failed to update cnode branch");
             }
         default:
             break;
