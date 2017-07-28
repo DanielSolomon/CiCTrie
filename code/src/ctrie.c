@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <nodes.h>
 
 #include "common.h"
 #include "ctrie.h"
@@ -26,6 +27,11 @@ static void ctrie_free  (ctrie_t* ctrie);
 
 static void lnode_free(lnode_t* lnode);
 static void main_node_free(main_node_t* main_node);
+
+static main_node_t* to_compressed(cnode_t* old_main_node, int lev);
+static main_node_t* to_contracted(main_node_t* main_node, int lev);
+static tnode_t      entomb(snode_t* snode);
+static branch_t*    resurrect(inode_t* inode);
 
 /*******************
  * MACRO FUNCTIONS *
@@ -191,13 +197,116 @@ static int lnode_lookup(lnode_t* lnode, int key)
 
 static int hash(int key)
 {
-    // TODO hash
+    // TODO: hash
     return key;
+}
+
+static tnode_t entomb(snode_t* snode)
+{
+    return (tnode_t) {.snode = *snode};
+}
+
+static branch_t* resurrect(inode_t* inode)
+{
+    branch_t* new_branch = NULL;
+    MALLOC(new_branch, branch_t);
+
+    if (inode->main->type == TNODE)
+    {
+        new_branch->type        = SNODE;
+        new_branch->node.snode  = inode->main->node.tnode.snode;
+    }
+    else
+    {
+        new_branch->type        = INODE;
+        new_branch->node.inode  = *inode;
+    }
+    return new_branch;
+
+CLEANUP:
+    return NULL;
+}
+
+static main_node_t* to_contracted(main_node_t* main_node, int lev)
+{
+    if (main_node->type != CNODE)
+    {
+        return main_node;
+    }
+    cnode_t* cnode = &(main_node->node.cnode);
+    if (lev > 0 && cnode->length == 1)
+    {
+        int index = highest_on_bit(cnode->bmp);
+        if (cnode->array[index]->type == SNODE)
+        {
+            tnode_t tnode = entomb(&(cnode->array[index]->node.snode));
+            branch_free(cnode->array[index]);
+            main_node->type         = TNODE;
+            main_node->node.tnode   = tnode;
+        }
+    }
+    return main_node;
+}
+
+static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
+{
+    main_node_t* new_main_node  = NULL;
+    branch_t*    curr_branch    = NULL;
+    branch_t*    new_branch     = NULL;
+    MALLOC(new_main_node, main_node_t);
+    cnode_t new_cnode           = {0};
+    new_cnode.bmp               = old_cnode->bmp;
+    new_cnode.length            = old_cnode->length;
+    new_main_node->type         = CNODE;
+    new_main_node->node.cnode   = new_cnode;
+
+    new_cnode = new_main_node->node.cnode;
+    int i = 0;
+    for (i = 0; i < MAX_BRANCHES; i++)
+    {
+        if (new_cnode.array[i] != NULL)
+        {
+            curr_branch = new_cnode.array[i];
+            switch (curr_branch->type)
+            {
+            case SNODE:
+                MALLOC(new_branch, branch_t);
+                new_branch->type        = SNODE;
+                new_branch->node.snode  = curr_branch->node.snode;
+                new_cnode.array[i]      = new_branch;
+                break;
+            case INODE:
+                new_branch = resurrect(&(curr_branch->node.inode));
+                if (new_branch == NULL)
+                {
+                    FAIL("Failed to resurrect");
+                }
+                new_cnode.array[i] = new_branch;
+            default:
+                break;
+            }
+        }
+    }
+    return to_contracted(new_main_node, lev);
+
+CLEANUP:
+    main_node_free(new_main_node);
+    return NULL;
 }
 
 static void clean(inode_t* inode, int lev)
 {
-    // TODO
+    main_node_t* old_main_node = inode->main;
+    if (inode->main->type == CNODE)
+    {
+        main_node_t* new_main_node = to_compressed(&(old_main_node->node.cnode), lev);
+        if (new_main_node != NULL)
+        {
+            if (!CAS(&(inode->main), old_main_node, new_main_node)) {
+                main_node_free(new_main_node);
+            }
+        }
+    }
 }
 
 /**
