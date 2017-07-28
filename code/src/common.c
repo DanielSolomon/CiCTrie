@@ -1,5 +1,7 @@
 #include "common.h"
 
+#define NUM_OF_BITS_IN_BYTE (8)
+
 void free_them_all(int count, ...)
 {
     va_list args;
@@ -15,4 +17,17 @@ void free_them_all(int count, ...)
         }
     }
     va_end(args);
+}
+
+int32_t highest_on_bit(uint32_t num)
+{
+    int32_t i;
+    for (i = NUM_OF_BITS_IN_BYTE * sizeof(uint32_t); i >= 0; i--)
+    {
+        if (num & (1 << i))
+        {
+            return i;
+        }
+    }
+    return -1;
 }
