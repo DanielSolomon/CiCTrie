@@ -548,6 +548,83 @@ CLEANUP:
     return NULL;
 }
 
+static main_node_t* lnode_copy(main_node_t* main_node)
+{
+    main_node_t* new_main_node = NULL;
+    MALLOC(new_main_node, main_node_t);
+    if (main_node->type != LNODE)
+    {
+        FAIL("Expected lnode, got %d", main_node->type);
+    }
+
+    new_main_node->type = LNODE;
+    lnode_t* new_lnode  = &(new_main_node->node.lnode);
+    lnode_t* old_lnode  = &(main_node->node.lnode);
+    new_lnode->snode    = old_lnode->snode;
+    new_lnode->next     = NULL;
+    while (old_lnode->next)
+    {
+        old_lnode = old_lnode->next;
+        lnode_t* new = NULL;
+        MALLOC(new, lnode_t);
+        new->snode      = old_lnode->snode;
+        new->next       = NULL;
+        new_lnode->next = new;
+        new_lnode       = new_lnode->next;
+    }
+    return new_main_node;
+CLEANUP:
+    main_node_free(new_main_node);
+    return NULL;
+}
+
+static main_node_t* lnode_remove(main_node_t* main_node, int key, int* error, int* value)
+{
+    main_node_t* new_main_node = NULL;
+    *error = 1;
+
+    if (main_node->type != LNODE)
+    {
+        FAIL("Expected lnode, got %d", main_node->type);
+    }
+
+    new_main_node = lnode_copy(main_node);
+    if (new_main_node == NULL)
+    {
+        FAIL("Failed to copy lnode");
+    }
+
+    lnode_t* ptr    = &(new_main_node->node.lnode);
+    lnode_t* temp   = NULL;
+
+    *error = 0;
+    if (ptr->snode.key == key)
+    {
+        *value = ptr->snode.value;
+        ptr->snode  = ptr->next->snode;
+        temp        = ptr->next;
+        ptr->next   = temp->next;
+        free(temp);
+        return new_main_node;
+    }
+    while (ptr->next != NULL)
+    {
+        if (ptr->next->snode.key == key)
+        {
+            temp      = ptr->next;
+            ptr->next = temp->next;
+            *value    = temp->snode.value;
+            free(temp);
+            return new_main_node;
+        }
+        ptr = ptr->next;
+    }
+
+CLEANUP:
+    main_node_free(new_main_node);
+    return NULL;
+}
+
 /**
  * Attempts to insert (`key`, `value`) to the subtree of `inode`.
  * Returns OK if successful, FAILED if an error occured or RESTART if the insert should be called again.
@@ -651,10 +728,161 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value)
         res = internal_insert(ctrie->inode, key, value, 0, NULL);
     }
     while (res == RESTART);
-    return  res;
+    return res;
+}
+
+static int lnode_length(lnode_t* lnode)
+{
+    int length = 0;
+    if (lnode == NULL)
+    {
+        return length;
+    }
+    length++;
+    while (lnode->next != NULL)
+    {
+        length++;
+        lnode = lnode->next;
+    }
+    return length;
+}
+
+static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
+{
+    main_node_t* new_main_node = NULL;
+    MALLOC(new_main_node, main_node_t);
+
+    new_main_node->type = CNODE;
+    new_main_node->node.cnode = main_node->node.cnode;
+    new_main_node->node.cnode.bmp |= ~flag;
+    new_main_node->node.cnode.array[pos] = NULL;
+    new_main_node->node.cnode.length--;
+
+    // TODO free the deleted branch.
+
+    return new_main_node;
+CLEANUP:
+    free_them_all(1, new_main_node);
+    return NULL;
+}
+
+/**
+ * Attempts to remove `key` from the subtree of `inode`.
+ * Returns OK if successful, FAILED if an error occured, RESTART if the remove should be called again or NOTFOUND if no such key in the subtree of `inode`.
+ */
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
+{
+    if (inode->main == NULL)
+    {
+        return FAILED;
+    }
+
+    int pos  = 0;
+    int flag = 0;
+    branch_t* branch = NULL;
+    main_node_t* main_node = NULL;
+    branch_t* child = NULL;
+
+    // Check the inode's child.
+    main_node = inode->main;
+    switch(main_node->type)
+    {
+        case CNODE:
+        {
+            int res = NOTFOUND;
+            // CNode - compute the branch with the relevant hash bits and insert in it.
+            pos = (hash(key) >> lev) & 0x1f;
+            flag = 1 << pos;
+            // Check if the branch is empty.
+            if ((flag & main_node->node.cnode.bmp) == 0) {
+                // If so, key is not found.
+                res = NOTFOUND;
+                goto DONE;
+            }
+            // Check the branch.
+            branch = main_node->node.cnode.array[pos];
+            switch (branch->type) {
+                case INODE:
+                    // INode - recursively remove.
+                    res = internal_remove(&(branch->node.inode), key, lev + W, inode);
+                    break;
+                case SNODE:
+                    if (key != branch->node.snode.key) {
+                        res = NOTFOUND;
+                    } else {
+                        res = branch->node.snode.value;
+                        main_node_t *new_main_node = cnode_remove(main_node, pos, flag);
+                        if (new_main_node == NULL) {
+                            FAIL("Failed to remove %d from cnode", key);
+                        }
+                        new_main_node = to_contracted(new_main_node, lev);
+                        if (!CAS(&(inode->main), main_node, new_main_node)) {
+                            res = RESTART;
+                            main_node_free(new_main_node);
+                        }
+                    }
+                default:
+                    break;
+            }
+        DONE:
+            if (res == NOTFOUND || res == RESTART) {
+                return res;
+            }
+            if (inode->main->type == TNODE) {
+                clean_parent(parent, inode, hash(key), lev - W);
+            }
+            return res;
+        }
+        case TNODE:
+            clean(parent, lev - W);
+            return RESTART;
+        case LNODE:
+        {
+            int error = 0;
+            int old_value = 0;
+            main_node_t* new_main_node = lnode_remove(main_node, key, &error, &old_value);
+            if (error)
+            {
+                FAIL("failed to remove %d from lnode list", key);
+            }
+            if (new_main_node == NULL)
+            {
+                return NOTFOUND;
+            }
+            if (lnode_length(&(new_main_node->node.lnode)) == 1)
+            {
+                tnode_t tnode = entomb(&(new_main_node->node.lnode.snode));
+                lnode_free(&(new_main_node->node.lnode));
+                new_main_node->type = TNODE;
+                new_main_node->node.tnode = tnode;
+            }
+            if (CAS(&(inode->main), main_node, new_main_node))
+            {
+                return old_value;
+            }
+            else
+            {
+                main_node_free(new_main_node);
+                return RESTART;
+            }
+        }
+        default:
+            return FAILED;
+    }
+
+    CLEANUP:
+    if (child != NULL)
+    {
+        branch_free(child);
+    }
+    return FAILED;
 }
 
 static int ctrie_remove(ctrie_t* ctrie, int key)
 {
-    return FAILED;
+    int res = RESTART;
+    do {
+        res = internal_remove(ctrie->inode, key, 0, NULL);
+    } while (res == RESTART);
+    return res;
 }
