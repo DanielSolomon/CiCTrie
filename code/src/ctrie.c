@@ -27,11 +27,14 @@ static void ctrie_free  (ctrie_t* ctrie);
 
 static void lnode_free(lnode_t* lnode);
 static void main_node_free(main_node_t* main_node);
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value);
 
 static main_node_t* to_compressed(cnode_t* old_main_node, int lev);
 static main_node_t* to_contracted(main_node_t* main_node, int lev);
 static tnode_t      entomb(snode_t* snode);
 static branch_t*    resurrect(inode_t* inode);
+static void         clean(inode_t* inode, int lev);
+static void         clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev);
 
 /*******************
  * MACRO FUNCTIONS *
@@ -307,6 +310,36 @@ static void clean(inode_t* inode, int lev)
             }
         }
     }
+}
+
+static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev)
+{
+    main_node_t* parent_main_node   = parent->main;
+    main_node_t* main_node          = inode->main;
+    main_node_t* new_main_node      = NULL;
+
+    if (parent_main_node->type == CNODE)
+    {
+        int pos  = (key_hash >> lev) & 0x1f;
+        int flag = 1 << pos;
+        cnode_t*    parent_cnode    = &(parent_main_node->node.cnode);
+        branch_t*   branch          = parent_cnode->array[pos];
+        if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) {
+            snode_t snode = main_node->node.tnode.snode;
+            new_main_node = cnode_update(parent_main_node, pos, snode.key, snode.value);
+            if (new_main_node == NULL) {
+                FAIL("Failed to update cnode");
+            }
+            new_main_node = to_contracted(new_main_node, lev);
+            if (!CAS(&(parent->main), parent_main_node, new_main_node))
+            {
+                main_node_free(new_main_node);
+                clean_parent(parent, inode, key_hash, lev);
+            }
+        }
+    }
+CLEANUP:
+    main_node_free(new_main_node);
 }
 
 /**
