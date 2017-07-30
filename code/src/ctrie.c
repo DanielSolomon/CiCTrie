@@ -20,21 +20,73 @@
  * Functions Declaration *
  *************************/
 
+/***********************
+ * CTrie API functions *
+ ***********************/
+
 static int  ctrie_insert(ctrie_t* ctrie, int key, int value);
 static int  ctrie_remove(ctrie_t* ctrie, int key);
 static int  ctrie_lookup(ctrie_t* ctrie, int key);
 static void ctrie_free  (ctrie_t* ctrie);
 
-static void lnode_free(lnode_t* lnode);
-static void main_node_free(main_node_t* main_node);
-static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value);
+/******************
+ * Free functions *
+ ******************/
 
+static void branch_free   (branch_t* branch);
+static void inode_free    (inode_t* inode);
+static void lnode_free    (lnode_t* lnode);
+static void main_node_free(main_node_t* main_node);
+
+/*******************
+ * Clean functions *
+ *******************/
+
+static void         clean        (inode_t* inode, int lev);
+static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev);
 static main_node_t* to_compressed(cnode_t* old_main_node, int lev);
 static main_node_t* to_contracted(main_node_t* main_node, int lev);
-static tnode_t      entomb(snode_t* snode);
-static branch_t*    resurrect(inode_t* inode);
-static void         clean(inode_t* inode, int lev);
-static void         clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev);
+
+/*******************
+ * Death functions *
+ *******************/
+
+static tnode_t   entomb   (snode_t* snode);
+static branch_t* resurrect(inode_t* inode);
+
+/***********************
+ * Internals functions *
+ ***********************/
+
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent);
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent);
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent);
+
+/*******************
+ * CNode functions *
+ *******************/
+
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value);
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value);
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch);
+static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag);
+
+/*******************
+ * LNode functions *
+ *******************/
+
+static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode);
+static main_node_t* lnode_copy  (main_node_t* main_node);
+static main_node_t* lnode_remove(main_node_t* main_node, int key, int* error, int* value);
+static int          lnode_length(lnode_t* lnode);
+static int          lnode_lookup(lnode_t* lnode, int key);
+
+/*********
+ * Other *
+ *********/
+
+static int       hash         (int key);
+static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
 
 /*******************
  * MACRO FUNCTIONS *
@@ -52,6 +104,10 @@ static void         clean_parent(inode_t* parent, inode_t* inode, int key_hash, 
     }                                       \
 } while (0)
 
+/**
+ * Creates CTrie instance.
+ * @return On success initialized CTrie instance is returned, otherwise NULL is returned.
+ **/
 ctrie_t* create_ctrie()
 {
     ctrie_t* ctrie = malloc(sizeof(ctrie_t));
@@ -91,8 +147,9 @@ CLEANUP:
 
 /**
  * Frees `branch` and all it's decendants.
- * NOTE: not thread-safe.
- */
+ * @param branch: branch pointer to be freed.
+ * @note not thread-safe.
+ **/
 static void branch_free(branch_t* branch)
 {
     if (branch != NULL)
@@ -113,8 +170,9 @@ static void branch_free(branch_t* branch)
 
 /**
  * Frees the lnode-list beginning with `lnode`.
- * NOTE: not thread-safe.
- */
+ * @param lnode : lnode pointer to be freed.
+ * @note not thread-safe.
+ **/
 static void lnode_free(lnode_t* lnode)
 {
     if (lnode != NULL)
@@ -125,9 +183,10 @@ static void lnode_free(lnode_t* lnode)
 }
 
 /**
- * Frees `main_node` and all it's decendants
- * NOTE: not thread-safe.
- */
+ * Frees `main_node` and all it's decendants.
+ * @param main_node: main node pointer to be freed.
+ * @note not thread-safe.
+ **/
 static void main_node_free(main_node_t* main_node)
 {
     int i = 0;
@@ -155,8 +214,9 @@ static void main_node_free(main_node_t* main_node)
 
 /**
  * Frees `inode` and all it's decendants
- * NOTE: not thread-safe.
- */
+ * @param inode: inode pointer to be freed.
+ * @note not thread-safe.
+ **/
 static void inode_free(inode_t* inode)
 {
     if (inode != NULL)
@@ -166,11 +226,12 @@ static void inode_free(inode_t* inode)
     }
 }
 
-// TODO Consider making ctrie_free thread-safe by a single mutex only for integrity of the code.
 /**
- * Frees the entire ctrie
- * NOTE: not thread-safe.
- */
+ * Frees the entire `ctrie`.
+ * @param ctrie: ctrie pointer to be freed.
+ * @note not thread-safe.
+ * @todo consider making ctrie_free thread-safe by a single mutex only for the integrity of the code.
+ **/
 static void ctrie_free(ctrie_t* ctrie)
 {
     if (ctrie != NULL) 
@@ -182,8 +243,10 @@ static void ctrie_free(ctrie_t* ctrie)
 
 /**
  * Searches for `key` in the lnode-list beginning with `lnode`.
- * Returns the value if found, else returns NOTFOUND.
- */
+ * @param lnode: lnode-list to search in.
+ * @param key: to search for.
+ * @return if key is found returns the related value, otherwise returns NOTFOUND.
+ **/
 static int lnode_lookup(lnode_t* lnode, int key)
 {
     lnode_t* ptr = lnode;
@@ -198,17 +261,32 @@ static int lnode_lookup(lnode_t* lnode, int key)
     return NOTFOUND;
 }
 
+/**
+ * Calculates the hash (32-bit) value of a `key`.
+ * @param key: key to find its hash value.
+ * @return the hash of the given key.
+ **/
 static int hash(int key)
 {
     // TODO: hash
     return key;
 }
 
+/**
+ * Wraps tnode around snode.
+ * @param snode: snode pointer which will become tnode.
+ * @return tnode that wraps a copy of the given snode.
+ **/
 static tnode_t entomb(snode_t* snode)
 {
     return (tnode_t) {.snode = *snode};
 }
 
+/**
+ * Revives inode content.
+ * @param inode: inode pointer to revive its content if needed.
+ * @return On success branch_t pointer is returned contains the revived snode or old inode, otherwise NULL is returned.
+ **/
 static branch_t* resurrect(inode_t* inode)
 {
     branch_t* new_branch = NULL;
@@ -230,6 +308,12 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Contracts main node if points to a 1-length CNode.
+ * @param main_node: main node pointer to be contracted.
+ * @param lev: hash level.
+ * @return if needed returns new contracted main node, otherwise old main node is returned.
+ **/
 static main_node_t* to_contracted(main_node_t* main_node, int lev)
 {
     if (main_node->type != CNODE)
@@ -251,6 +335,12 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev)
     return main_node;
 }
 
+/**
+ * Compress cnode and wraps it with a main node.
+ * @param old_cnode: old cnode to be compressed.
+ * @param lev: hash level.
+ * @return On success compresed cnode wrapped by a new main_node is returned, otherwise NULL is returned.
+ **/
 static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
 {
     main_node_t* new_main_node  = NULL;
@@ -297,6 +387,11 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Tries to clean inode if it points to a compressable CNode.
+ * @param inode: inode to clean.
+ * @param lev: hash level.
+ **/
 static void clean(inode_t* inode, int lev)
 {
     main_node_t* old_main_node = inode->main;
@@ -312,6 +407,14 @@ static void clean(inode_t* inode, int lev)
     }
 }
 
+/**
+ * Persistent cleans the related key_hash member in the CNode pointed by the parent main node.
+ * @param parent: parent node to clean its child.
+ * @param inode: child of parent.
+ * @param key_hash: a hash of the key to be cleaned.
+ * @param lev: hash level.
+ * @todo this function may fail...
+ */
 static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev)
 {
     main_node_t* parent_main_node   = parent->main;
@@ -346,6 +449,14 @@ CLEANUP:
  * Searches for `key` in `inode`'s decendants.
  * Returns the value if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
  */
+/**
+ * Searches for `key` in `inode`'s descendants.
+ * @param inode: inode to be searched in.
+ * @param key: key to be searched for.
+ * @param lev: hash level.
+ * @param parent: parent inode pointer.
+ * @return On success returns the value related to the found key if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
+ **/
 static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
 {
     if (inode->main == NULL)
