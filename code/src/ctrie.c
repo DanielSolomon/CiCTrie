@@ -446,10 +446,6 @@ CLEANUP:
 }
 
 /**
- * Searches for `key` in `inode`'s decendants.
- * Returns the value if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
- */
-/**
  * Searches for `key` in `inode`'s descendants.
  * @param inode: inode to be searched in.
  * @param key: key to be searched for.
@@ -511,8 +507,10 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
 
 /**
  * Searches for `key` in the ctrie.
- * Returns the value if found, else returns NOTFOUND.
- */
+ * @param ctrie
+ * @param key
+ * @return If `key` is found, its value is returned, otherwise NOTFOUND is returned.
+ **/
 static int ctrie_lookup(struct ctrie_t* ctrie, int key)
 {
     int res = RESTART;
@@ -524,9 +522,17 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
 }
 
 /**
- * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
  * Returns the created CNode if successful, else returns NULL.
  */
+/**
+ * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
+ * @param main_node
+ * @param pos
+ * @param flag
+ * @param key
+ * @param value
+ * @return On success an updated CNode is returned wrapped by main node, otherwise NULL is returned.
+ **/
 static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value)
 {
     main_node_t* new_main_node = NULL;
@@ -551,15 +557,25 @@ CLEANUP:
 
 /**
  * Creates a copy of `cnode`, but updated the branch in position `pos` to an SNode of (`key`, `value`).
- * Returns the created CNode if successful, else returns NULL.
- * TODO This is very similar to cnode_insert...
- */
+ * @param main_node
+ * @param pos
+ * @param key
+ * @param value
+ * @return On success updated CNode wrapped by main node is returned, otherwise NULL is returned.
+ **/
 static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value)
 {
     // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
     return cnode_insert(main_node, pos, 0, key, value);
 }
 
+/**
+ * Creates new main node which will contain CNode pointed by `main_node` updated by `branch` in position `pos`.
+ * @param main_node: main node points to a CNode.
+ * @param pos: position where to insert `branch`.
+ * @param branch: `branch` to be inserted.
+ * @return On success updated CNode wrapped by a main node is returned.
+ **/
 static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
 {
     main_node_t* new_main_node = NULL;
@@ -579,6 +595,13 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Creates branch points to cnode that contains both old snode and new snode, if needed lnode is created.
+ * @param lev: hash level.
+ * @param old_snode
+ * @param new_snode
+ * @return On sucess branch_t* is returned, otherwise NULL is reutrned.
+ **/
 static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
 {
     branch_t* branch = NULL;
@@ -638,6 +661,12 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Attempts to insert `snode` into lnode.
+ * @param main_node: main node pointer points to a LNode.
+ * @param snode: snode to insert into lnode pointed by main_node.
+ * @return On success new lnode is returned containing snode wrapped by main node, otherwise NULL is returned.
+ **/
 static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode)
 {
     main_node_t* new_main_node = NULL;
@@ -659,6 +688,11 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Copies lnode.
+ * @param main_node: main node pointer points to a LNode.
+ * @return On success returns a full copy of lnode wrapped by main node, otherwise NULL is returned.
+ */
 static main_node_t* lnode_copy(main_node_t* main_node)
 {
     main_node_t* new_main_node = NULL;
@@ -689,6 +723,14 @@ CLEANUP:
     return NULL;
 }
 
+/**
+ * Attempts to remove `key` from `main_node` points to LNode.
+ * @param main_node
+ * @param key
+ * @param error: int pointer that will be filled with `1` if an error occured, `0` otherwise.
+ * @param value: int pointer that will be filled with `key`'s value if it will be removed.
+ * @return On success, lnode without `key` wrapped by main node is returned, otherwise NULL is returned.
+ **/
 static main_node_t* lnode_remove(main_node_t* main_node, int key, int* error, int* value)
 {
     main_node_t* new_main_node = NULL;
@@ -738,7 +780,12 @@ CLEANUP:
 
 /**
  * Attempts to insert (`key`, `value`) to the subtree of `inode`.
- * Returns OK if successful, FAILED if an error occured or RESTART if the insert should be called again.
+ * @param inode
+ * @param key
+ * @param value
+ * @param lev
+ * @param parent
+ * @return On failure FAILED is returned, otherwise OK is returned if (`key`, `value`) was inserted, or RESTART if the insert should be called again.
  */
 static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent)
 {
@@ -830,8 +877,11 @@ CLEANUP:
 
 /**
  * Attempts to insert (`key`, `value`) to the ctrie.
- * Returns OK if successful or FAILED if an error occured.
- */
+ * @param ctrie
+ * @param key
+ * @param value
+ * @return On success, OK is returned, otherwise FAILED is returned.
+ **/
 static int ctrie_insert(ctrie_t* ctrie, int key, int value)
 {
     int res = RESTART;
@@ -842,6 +892,11 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value)
     return res;
 }
 
+/**
+ * Calculates `lnode` length.
+ * @param lnode: lnode pointer.
+ * @return `lnode`'s length.
+ */
 static int lnode_length(lnode_t* lnode)
 {
     int length = 0;
@@ -858,6 +913,13 @@ static int lnode_length(lnode_t* lnode)
     return length;
 }
 
+/**
+ *
+ * @param main_node: main node which points to a cnode.
+ * @param pos: position to removed.
+ * @param flag: bmp flag to set off.
+ * @return On success a new cnode wrapped by main node is returned (without pos memeber), otherwise NULL is returned.
+ **/
 static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
 {
     main_node_t* new_main_node = NULL;
@@ -879,8 +941,12 @@ CLEANUP:
 
 /**
  * Attempts to remove `key` from the subtree of `inode`.
- * Returns OK if successful, FAILED if an error occured, RESTART if the remove should be called again or NOTFOUND if no such key in the subtree of `inode`.
- */
+ * @param inode: subtree from which to remove `key`.
+ * @param key: key to be removed.
+ * @param lev: hash level.
+ * @param parent: parent inode of `inode`.
+ * @return On failure, FAILED is returned, otherwise if `key` was removed its value is returned, if `key` couldn't be found NOTFOUND is returned, RESTART my be the result if `internal_remove` shoud be called again.
+ **/
 static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
 {
     if (inode->main == NULL)
@@ -989,6 +1055,12 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
     return FAILED;
 }
 
+/**
+ * Removes `key` from `ctrie`.
+ * @param ctrie: ctrie pointer from which key will be removed.
+ * @param key: key to be removed.
+ * @return On failure FAILED is returned, otherwise, if `key` was found, its value is returned and if not NOTFOUND is returned.
+ **/
 static int ctrie_remove(ctrie_t* ctrie, int key)
 {
     int res = RESTART;
