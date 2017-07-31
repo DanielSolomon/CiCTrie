@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <nodes.h>
 
@@ -11,10 +10,10 @@
  * CONSTANTS *
  *************/
 
-#define NOTFOUND (0)
-#define RESTART -1
-#define FAILED -2
-#define OK 0
+#define OK          (0)
+#define NOTFOUND    (0)
+#define RESTART     (-1)
+#define FAILED      (-2)
 
 /*************************
  * Functions Declaration *
@@ -110,23 +109,12 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
  **/
 ctrie_t* create_ctrie()
 {
-    ctrie_t* ctrie = malloc(sizeof(ctrie_t));
-    if (ctrie == NULL) 
-    {
-        FAIL("allocating %d bytes failed", sizeof(ctrie_t));
-    }
-    inode_t* inode = malloc(sizeof(inode_t));
-    if (inode == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
-    main_node_t* main_node = malloc(sizeof(main_node_t));
-    if (main_node == NULL)
-    {
-        printf("malloc failed.\n");
-        goto CLEANUP;
-    }
+    ctrie_t*        ctrie       = NULL;
+    inode_t*        inode       = NULL;
+    main_node_t*    main_node   = NULL;
+    MALLOC(ctrie, ctrie_t);
+    MALLOC(inode, inode_t);
+    MALLOC(main_node, main_node_t);
 
     cnode_t cnode           = {0};
     main_node->type         = CNODE;
@@ -141,7 +129,7 @@ ctrie_t* create_ctrie()
     return ctrie;
 
 CLEANUP:
-    free_them_all(2, ctrie, inode);
+    free_them_all(3, ctrie, inode, main_node);
     return NULL;
 }
 
@@ -490,7 +478,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
             }
             return NOTFOUND;
         default:
-            break;
+            return NOTFOUND;
         }
     case TNODE:
         // TNode - help resurrect it and restart.
@@ -500,7 +488,6 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
         // LNode - search the linked list.
         return lnode_lookup(&(inode->main->node.lnode), key);
     default:
-        // TODO Dafuq?
         return NOTFOUND;
     }
 }
@@ -535,19 +522,19 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
  **/
 static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value)
 {
-    main_node_t* new_main_node = NULL;
-    branch_t* branch = NULL;
+    main_node_t*    new_main_node   = NULL;
+    branch_t*       branch          = NULL;
     MALLOC(branch, branch_t);
     MALLOC(new_main_node, main_node_t);
 
-    branch->type = SNODE;
-    branch->node.snode.key = key;
-    branch->node.snode.value = value;
+    branch->type                = SNODE;
+    branch->node.snode.key      = key;
+    branch->node.snode.value    = value;
 
-    new_main_node->type = CNODE;
-    new_main_node->node.cnode = main_node->node.cnode;
-    new_main_node->node.cnode.bmp |= flag;
-    new_main_node->node.cnode.array[pos] = branch;
+    new_main_node->type                     = CNODE;
+    new_main_node->node.cnode               = main_node->node.cnode;
+    new_main_node->node.cnode.bmp          |= flag;
+    new_main_node->node.cnode.array[pos]    = branch;
     
     return new_main_node;
 CLEANUP:
@@ -581,17 +568,14 @@ static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
 
-    new_main_node->type = CNODE;
-    new_main_node->node.cnode = main_node->node.cnode;
-    new_main_node->node.cnode.array[pos] = branch;
+    new_main_node->type                     = CNODE;
+    new_main_node->node.cnode               = main_node->node.cnode;
+    new_main_node->node.cnode.array[pos]    = branch;
     
     return new_main_node;
 
 CLEANUP:
-    if (new_main_node != NULL)
-    {
-        free(new_main_node);
-    }
+    free_them_all(1, new_main_node);
     return NULL;
 }
 
@@ -604,12 +588,12 @@ CLEANUP:
  **/
 static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
 {
-    branch_t* branch = NULL;
-    branch_t* child  = NULL;
-    branch_t* sibling1 = NULL;
-    branch_t* sibling2 = NULL;
-    lnode_t*  next   = NULL;
-    main_node_t* main_node = NULL;
+    branch_t*    branch     = NULL;
+    branch_t*    child      = NULL;
+    branch_t*    sibling1   = NULL;
+    branch_t*    sibling2   = NULL;
+    lnode_t*     next       = NULL;
+    main_node_t* main_node  = NULL;
 
     MALLOC(main_node, main_node_t);
     MALLOC(branch, branch_t);
@@ -669,17 +653,17 @@ CLEANUP:
  **/
 static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode)
 {
-    main_node_t* new_main_node = NULL;
-    lnode_t* next = NULL;
+    main_node_t*    new_main_node   = NULL;
+    lnode_t*        next            = NULL;
     MALLOC(new_main_node, main_node_t);
     MALLOC(next, lnode_t);
 
     next->snode = main_node->node.lnode.snode;
-    next->next = main_node->node.lnode.next;
+    next->next  = main_node->node.lnode.next;
 
-    new_main_node->type = LNODE;
+    new_main_node->type             = LNODE;
     new_main_node->node.lnode.snode = *snode;
-    new_main_node->node.lnode.next = next;
+    new_main_node->node.lnode.next  = next;
 
     return new_main_node;
 
@@ -697,6 +681,7 @@ static main_node_t* lnode_copy(main_node_t* main_node)
 {
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
+
     if (main_node->type != LNODE)
     {
         FAIL("Expected lnode, got %d", main_node->type);
@@ -707,18 +692,23 @@ static main_node_t* lnode_copy(main_node_t* main_node)
     lnode_t* old_lnode  = &(main_node->node.lnode);
     new_lnode->snode    = old_lnode->snode;
     new_lnode->next     = NULL;
+
     while (old_lnode->next)
     {
-        old_lnode = old_lnode->next;
+        old_lnode    = old_lnode->next;
         lnode_t* new = NULL;
         MALLOC(new, lnode_t);
+
         new->snode      = old_lnode->snode;
         new->next       = NULL;
         new_lnode->next = new;
         new_lnode       = new_lnode->next;
     }
+
     return new_main_node;
+
 CLEANUP:
+
     main_node_free(new_main_node);
     return NULL;
 }
@@ -753,7 +743,7 @@ static main_node_t* lnode_remove(main_node_t* main_node, int key, int* error, in
     *error = 0;
     if (ptr->snode.key == key)
     {
-        *value = ptr->snode.value;
+        *value      = ptr->snode.value;
         ptr->snode  = ptr->next->snode;
         temp        = ptr->next;
         ptr->next   = temp->next;
@@ -796,11 +786,13 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
 
     int pos  = 0;
     int flag = 0;
-    branch_t* branch = NULL;
-    main_node_t* main_node = NULL;
-    branch_t* child = NULL;
+    branch_t*    branch     = NULL;
+    main_node_t* main_node  = NULL;
+    branch_t*    child      = NULL;
+
     // Check the inode's child.
     main_node = inode->main;
+
     switch(main_node->type)
     {
     case CNODE:
@@ -842,7 +834,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             break;
         }
     case TNODE:
-        //TODO
+        clean(parent, lev - W);
         break;
     case LNODE:
     {
@@ -863,15 +855,11 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         }
     }
     default:
-        // TODO Dafuq?
         return FAILED;
     }
 
 CLEANUP:
-    if (child != NULL)
-    {
-        branch_free(child);
-    }
+    branch_free(child);
     return FAILED;
 }
 
@@ -925,17 +913,18 @@ static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
 
-    new_main_node->type = CNODE;
-    new_main_node->node.cnode = main_node->node.cnode;
-    new_main_node->node.cnode.bmp |= ~flag;
-    new_main_node->node.cnode.array[pos] = NULL;
+    new_main_node->type                     = CNODE;
+    new_main_node->node.cnode               = main_node->node.cnode;
+    new_main_node->node.cnode.bmp          |= ~flag;
+    new_main_node->node.cnode.array[pos]    = NULL;
     new_main_node->node.cnode.length--;
 
     // TODO free the deleted branch.
 
     return new_main_node;
+
 CLEANUP:
-    free_them_all(1, new_main_node);
+
     return NULL;
 }
 
@@ -954,11 +943,10 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
         return FAILED;
     }
 
-    int pos  = 0;
-    int flag = 0;
-    branch_t* branch = NULL;
-    main_node_t* main_node = NULL;
-    branch_t* child = NULL;
+    int          pos        = 0;
+    int          flag       = 0;
+    branch_t*    branch     = NULL;
+    main_node_t* main_node  = NULL;
 
     // Check the inode's child.
     main_node = inode->main;
@@ -1047,11 +1035,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
             return FAILED;
     }
 
-    CLEANUP:
-    if (child != NULL)
-    {
-        branch_free(child);
-    }
+CLEANUP:
     return FAILED;
 }
 
@@ -1069,3 +1053,8 @@ static int ctrie_remove(ctrie_t* ctrie, int key)
     } while (res == RESTART);
     return res;
 }
+
+
+
+
+
