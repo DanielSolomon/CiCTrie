@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <nodes.h>
 
 #include "common.h"
@@ -43,7 +42,7 @@ static void main_node_free(main_node_t* main_node);
 
 static void         clean        (inode_t* inode, int lev);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev);
-static main_node_t* to_compressed(cnode_t* old_main_node, int lev);
+static main_node_t* to_compressed(cnode_t* old_cnode, int lev);
 static main_node_t* to_contracted(main_node_t* main_node, int lev);
 
 /*******************
@@ -84,15 +83,15 @@ static int          lnode_lookup(lnode_t* lnode, int key);
  * Other *
  *********/
 
-static int       hash         (int key);
-static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
+static int          hash         (int key);
+static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
 
 /*******************
  * MACRO FUNCTIONS *
  *******************/
 
 #define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
-#define CAS_IT(CASed, old, new, msg) do {   \
+#define CAS_OR_RESTART(CASed, old, new, msg) do {   \
     if (new == NULL)                        \
         FAIL(msg);                          \
     if (CAS(CASed, old, new))               \
@@ -134,7 +133,7 @@ CLEANUP:
 }
 
 /**
- * Frees `branch` and all it's decendants.
+ * Frees `branch` and all its decendants.
  * @param branch: branch pointer to be freed.
  * @note not thread-safe.
  **/
@@ -171,7 +170,7 @@ static void lnode_free(lnode_t* lnode)
 }
 
 /**
- * Frees `main_node` and all it's decendants.
+ * Frees `main_node` and all its decendants.
  * @param main_node: main node pointer to be freed.
  * @note not thread-safe.
  **/
@@ -201,7 +200,7 @@ static void main_node_free(main_node_t* main_node)
 }
 
 /**
- * Frees `inode` and all it's decendants
+ * Frees `inode` and all its decendants
  * @param inode: inode pointer to be freed.
  * @note not thread-safe.
  **/
@@ -275,6 +274,7 @@ static tnode_t entomb(snode_t* snode)
  * @param inode: inode pointer to revive its content if needed.
  * @return On success branch_t pointer is returned contains the revived snode or old inode, otherwise NULL is returned.
  **/
+// CR: If the inode doesn't point to a tnode (so it doesn't need to be resurrected), why bother replacing the branch?
 static branch_t* resurrect(inode_t* inode)
 {
     branch_t* new_branch = NULL;
@@ -314,6 +314,8 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev)
         int index = highest_on_bit(cnode->bmp);
         if (cnode->array[index]->type == SNODE)
         {
+            // CR: We need to allocate a new main_node, changing the original main_node is not good.
+            // CR: This also means we can't free the original branch.
             tnode_t tnode = entomb(&(cnode->array[index]->node.snode));
             branch_free(cnode->array[index]);
             main_node->type         = TNODE;
@@ -334,6 +336,7 @@ static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
     main_node_t* new_main_node  = NULL;
     branch_t*    curr_branch    = NULL;
     branch_t*    new_branch     = NULL;
+
     MALLOC(new_main_node, main_node_t);
     cnode_t new_cnode           = {0};
     new_cnode.bmp               = old_cnode->bmp;
@@ -341,12 +344,15 @@ static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
     new_main_node->type         = CNODE;
     new_main_node->node.cnode   = new_cnode;
 
+    // CR: wat. You've just set new_main_node->node.cnode to be new_cnode.
     new_cnode = new_main_node->node.cnode;
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
     {
+        // CR: did you mean old_cnode.array[i]?
         if (new_cnode.array[i] != NULL)
         {
+            // CR: did you mean old_cnode.array[i]?
             curr_branch = new_cnode.array[i];
             switch (curr_branch->type)
             {
@@ -391,6 +397,7 @@ static void clean(inode_t* inode, int lev)
             if (!CAS(&(inode->main), old_main_node, new_main_node)) {
                 main_node_free(new_main_node);
             }
+            // TODO add old_main_node to free list.
         }
     }
 }
@@ -416,6 +423,7 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev)
         cnode_t*    parent_cnode    = &(parent_main_node->node.cnode);
         branch_t*   branch          = parent_cnode->array[pos];
         if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) {
+            // CR: you could use the tnode's key and value directly, without assigning them to a snode.
             snode_t snode = main_node->node.tnode.snode;
             new_main_node = cnode_update(parent_main_node, pos, snode.key, snode.value);
             if (new_main_node == NULL) {
@@ -428,6 +436,7 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev)
                 clean_parent(parent, inode, key_hash, lev);
             }
         }
+        // CR: return aftet this.
     }
 CLEANUP:
     main_node_free(new_main_node);
@@ -509,9 +518,6 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key)
 }
 
 /**
- * Returns the created CNode if successful, else returns NULL.
- */
-/**
  * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
  * @param main_node
  * @param pos
@@ -535,6 +541,7 @@ static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int 
     new_main_node->node.cnode               = main_node->node.cnode;
     new_main_node->node.cnode.bmp          |= flag;
     new_main_node->node.cnode.array[pos]    = branch;
+    // CR: update length.
     
     return new_main_node;
 CLEANUP:
@@ -721,6 +728,7 @@ CLEANUP:
  * @param value: int pointer that will be filled with `key`'s value if it will be removed.
  * @return On success, lnode without `key` wrapped by main node is returned, otherwise NULL is returned.
  **/
+// CR: Usually functions return the error code and put the value in an OUT param.
 static main_node_t* lnode_remove(main_node_t* main_node, int key, int* error, int* value)
 {
     main_node_t* new_main_node = NULL;
@@ -804,20 +812,20 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         {
             // If so, simply create a new branch to an SNode and insert it.
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value);
-            CAS_IT(&(inode->main), main_node, new_main_node, "Failed to insert into cnode");
+            CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to insert into cnode");
         }
         // Check the branch.
         branch = main_node->node.cnode.array[pos];
         switch (branch->type)
         {
         case INODE:
-            // INode - recursively insert.
+            // INode - recurively insert.
             return internal_insert(&(branch->node.inode), key, value, lev + W, inode);
         case SNODE:
             if (key == branch->node.snode.key)
             {
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value);
-                CAS_IT(&(inode->main), main_node, new_main_node, "Failed to update cnode");
+                CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode");
             }
             else 
             {
@@ -828,7 +836,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                     return FAILED;
                 }
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
-                CAS_IT(&(inode->main), main_node, new_main_node, "Failed to update cnode branch");
+                CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode branch");
             }
         default:
             break;
@@ -892,6 +900,7 @@ static int lnode_length(lnode_t* lnode)
     {
         return length;
     }
+    // CR: do-while instead of incrementing manually before the loop. This will also cover the check above.
     length++;
     while (lnode->next != NULL)
     {
@@ -915,6 +924,7 @@ static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
 
     new_main_node->type                     = CNODE;
     new_main_node->node.cnode               = main_node->node.cnode;
+    // CR: Should be &=
     new_main_node->node.cnode.bmp          |= ~flag;
     new_main_node->node.cnode.array[pos]    = NULL;
     new_main_node->node.cnode.length--;
@@ -955,7 +965,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
         case CNODE:
         {
             int res = NOTFOUND;
-            // CNode - compute the branch with the relevant hash bits and insert in it.
+            // CNode - compute the branch with the relevant hash bits and remove from it.
             pos = (hash(key) >> lev) & 0x1f;
             flag = 1 << pos;
             // Check if the branch is empty.
@@ -1014,9 +1024,12 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
             {
                 return NOTFOUND;
             }
+            // CR: maybe move this into lnode_remove?
+            // CR: also, we only use lnode_length to check whether an lnode list has 1 node. Wouldn't it be simpler to check this excplicitly (lnode->next == NULL)?
             if (lnode_length(&(new_main_node->node.lnode)) == 1)
             {
                 tnode_t tnode = entomb(&(new_main_node->node.lnode.snode));
+                // CR: you can't free here, the CAS might fail.
                 lnode_free(&(new_main_node->node.lnode));
                 new_main_node->type = TNODE;
                 new_main_node->node.tnode = tnode;
