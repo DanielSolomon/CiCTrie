@@ -4,6 +4,7 @@
 
 #include "common.h"
 #include "ctrie.h"
+#include "hazard_pointer.h"
 
 /*************
  * CONSTANTS *
@@ -40,9 +41,9 @@ static void main_node_free(main_node_t* main_node);
  * Clean functions *
  *******************/
 
-static void         clean        (inode_t* inode, int lev);
+static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev);
-static main_node_t* to_compressed(cnode_t* old_cnode, int lev);
+static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_main_node, cnode_t* old_cnode, int lev);
 static main_node_t* to_contracted(main_node_t* main_node, int lev);
 
 /*******************
@@ -76,8 +77,7 @@ static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag);
 static main_node_t* lnode_insert(main_node_t* main_node, snode_t* snode);
 static main_node_t* lnode_copy  (main_node_t* main_node);
 static int          lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value);
-static int          lnode_length(lnode_t* lnode);
-static int          lnode_lookup(lnode_t* lnode, int key);
+static int          lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 
 /*********
  * Other *
@@ -232,9 +232,9 @@ static void ctrie_free(ctrie_t* ctrie)
  * Searches for `key` in the lnode-list beginning with `lnode`.
  * @param lnode: lnode-list to search in.
  * @param key: to search for.
- * @return if key is found returns the related value, otherwise returns NOTFOUND.
+ * @return if key is found returns the related value, returns RESTART if some race occurred, otherwise returns NOTFOUND.
  **/
-static int lnode_lookup(lnode_t* lnode, int key)
+static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
 {
     lnode_t* ptr = lnode;
     while (ptr != NULL)
@@ -242,6 +242,11 @@ static int lnode_lookup(lnode_t* lnode, int key)
         if (ptr->snode.key == key)
         {
             return ptr->snode.value;
+        }
+        PLACE_HP(thread_args, ptr->next);
+        if (ptr->marked)
+        {
+            return RESTART;
         }
         ptr = ptr->next;
     }
@@ -325,11 +330,12 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev)
  * @param lev: hash level.
  * @return On success compresed cnode wrapped by a new main_node is returned, otherwise NULL is returned.
  **/
-static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
+static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_main_node, cnode_t* old_cnode, int lev, thread_args_t* thread_args)
 {
     main_node_t* new_main_node  = NULL;
     branch_t*    curr_branch    = NULL;
     branch_t*    new_branch     = NULL;
+    int32_t      delete_map     = 0;
 
     MALLOC(new_main_node, main_node_t);
     cnode_t new_cnode           = *old_cnode;
@@ -350,10 +356,34 @@ static main_node_t* to_compressed(cnode_t* old_cnode, int lev)
                     FAIL("Failed to resurrect");
                 }
                 new_cnode.array[i] = new_branch;
+                delete_map |= 1 << i;
             }
         }
     }
-    return to_contracted(new_main_node, lev);
+
+    new_main_node = to_contracted(new_main_node, lev);
+    if (!CAS(cas_address, old_main_node, new_main_node)) {
+        goto CLEANUP;
+    }
+    old_main_node->node.cnode.marked = 1;
+    for (i = 0; i < MAX_BRANCHES; i++)
+    {
+        if (delete_map & (1 << i))
+        {
+            branch_t* branch = old_cnode->array[i];
+            branch->node.inode.marked = 1;
+        }
+    }
+    FENCE;
+    for (i = 0; i < MAX_BRANCHES; i++)
+    {
+        if (delete_map & (1 << i))
+        {
+            branch_t* branch = old_cnode->array[i];
+            add_to_free_list(thread_args, branch);
+        }
+    }
+    add_to_free_list(thread_args, old_main_node);
 
 CLEANUP:
     main_node_free(new_main_node);
@@ -364,19 +394,16 @@ CLEANUP:
  * Tries to clean inode if it points to a compressable CNode.
  * @param inode: inode to clean.
  * @param lev: hash level.
+ * @note Assumes that inode and inode->main are protected with HP.
  **/
-static void clean(inode_t* inode, int lev)
+static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
 {
     main_node_t* old_main_node = inode->main;
     if (inode->main->type == CNODE)
     {
-        main_node_t* new_main_node = to_compressed(&(old_main_node->node.cnode), lev);
+        main_node_t* new_main_node = to_compressed(&(inode->main), old_main_node, &(old_main_node->node.cnode), lev);
         if (new_main_node != NULL)
         {
-            if (!CAS(&(inode->main), old_main_node, new_main_node)) {
-                main_node_free(new_main_node);
-            }
-            // TODO add old_main_node to free list.
         }
     }
 }
@@ -427,11 +454,19 @@ CLEANUP:
  * @param parent: parent inode pointer.
  * @return On success returns the value related to the found key if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
  **/
-static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
 {
-    if (inode->main == NULL)
+    main_node_t* main_node = inode->main;
+
+    if (main_node == NULL)
     {
         return NOTFOUND;
+    }
+
+    PLACE_HP(thread_args, main_node);
+    if (inode->marked || inode->main != main_node)
+    {
+        return RESTART;
     }
 
     int pos  = 0;
@@ -446,16 +481,21 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
         pos = (hash(key) >> lev) & 0x1f;
         flag = 1 << pos;
         // Check if the branch is empty.
-        if ((flag & inode->main->node.cnode.bmp) == 0)
+        if ((flag & main_node->node.cnode.bmp) == 0)
         {
             return NOTFOUND;
         }
-        branch = inode->main->node.cnode.array[pos];
+        branch = main_node->node.cnode.array[pos];
+        PLACE_HP(thread_args, branch);
+        if (main_node->node.cnode.marked || main_node->node.cnode.array[pos] != branch)
+        {
+            return RESTART;
+        }
         switch (branch->type)
         {
         case INODE:
             // INode - recursively lookup.
-            return internal_lookup(&(branch->node.inode), key, lev + W, inode);
+            return internal_lookup(&(branch->node.inode), key, lev + W, inode, thread_args);
         case SNODE:
             // SNode - simply compare the keys.
             if (key == branch->node.snode.key)
@@ -468,11 +508,11 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
         }
     case TNODE:
         // TNode - help resurrect it and restart.
-        clean(parent, lev - W);
+        clean(parent, lev - W, thread_args);
         return RESTART;
     case LNODE:
         // LNode - search the linked list.
-        return lnode_lookup(&(inode->main->node.lnode), key);
+        return lnode_lookup(&(main_node->node.lnode), key, thread_args);
     default:
         return NOTFOUND;
     }
@@ -484,11 +524,11 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent)
  * @param key
  * @return If `key` is found, its value is returned, otherwise NOTFOUND is returned.
  **/
-static int ctrie_lookup(struct ctrie_t* ctrie, int key)
+static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_args)
 {
     int res = RESTART;
     do {
-        res = internal_lookup(ctrie->inode, key, 0, NULL);
+        res = internal_lookup(ctrie->inode, key, 0, NULL, thread_args);
     }
     while (res == RESTART);
     return  res;
@@ -555,7 +595,7 @@ static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_
     new_main_node->type                     = CNODE;
     new_main_node->node.cnode               = main_node->node.cnode;
     new_main_node->node.cnode.array[pos]    = branch;
-    
+
     return new_main_node;
 
 CLEANUP:
@@ -582,7 +622,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
     MALLOC(main_node, main_node_t);
     MALLOC(branch, branch_t);
 
-    if (lev < MAX_BRANCHES) 
+    if (lev < MAX_BRANCHES)
     {
         cnode_t cnode = {0};
         int pos1 = (hash(old_snode->key) >> lev) & 0x1f;
@@ -596,7 +636,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
             }
             cnode.array[pos1] = child;
         }
-        else 
+        else
         {
             MALLOC(sibling1, branch_t);
             MALLOC(sibling2, branch_t);
@@ -814,7 +854,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode");
             }
-            else 
+            else
             {
                 snode_t new_snode = { .key = key, .value = value };
                 child = create_branch(lev, &(branch->node.snode), &new_snode);
@@ -873,29 +913,6 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value)
     }
     while (res == RESTART);
     return res;
-}
-
-/**
- * Calculates `lnode` length.
- * @param lnode: lnode pointer.
- * @return `lnode`'s length.
- */
-static int lnode_length(lnode_t* lnode)
-{
-    int length = 0;
-    do
-    {
-        if (lnode != NULL)
-        {
-            length++;
-            lnode = lnode->next;
-        }
-        else
-        {
-            break;
-        }
-    } while (1);
-    return length;
 }
 
 /**

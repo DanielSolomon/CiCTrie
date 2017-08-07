@@ -35,11 +35,13 @@ typedef struct lnode_t
 {
     snode_t snode;
     struct lnode_t* next;
+    uint8_t marked;
 } lnode_t;
 
 typedef struct
 {
     main_node_t* main;
+    uint8_t marked;
 } inode_t;
 
 typedef struct
@@ -57,6 +59,7 @@ typedef struct
     uint32_t bmp;
     uint32_t length;
     branch_t* array[MAX_BRANCHES];
+    uint8_t marked;
 } cnode_t;
 
 struct main_node_t 
