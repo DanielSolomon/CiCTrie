@@ -4,7 +4,6 @@
 
 #include "common.h"
 #include "ctrie.h"
-#include "hazard_pointer.h"
 
 /*************
  * CONSTANTS *
@@ -23,9 +22,9 @@
  * CTrie API functions *
  ***********************/
 
-static int  ctrie_insert(ctrie_t* ctrie, int key, int value);
-static int  ctrie_remove(ctrie_t* ctrie, int key);
-static int  ctrie_lookup(ctrie_t* ctrie, int key);
+static int  ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* thread_args);
+static int  ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args);
+static int  ctrie_lookup(ctrie_t* ctrie, int key, thread_args_t* thread_args);
 static void ctrie_free  (ctrie_t* ctrie);
 
 /******************
@@ -43,7 +42,7 @@ static void main_node_free(main_node_t* main_node);
 
 static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev);
-static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_main_node, cnode_t* old_cnode, int lev);
+static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
 static main_node_t* to_contracted(main_node_t* main_node, int lev);
 
 /*******************
@@ -57,9 +56,9 @@ static branch_t* resurrect(inode_t* inode);
  * Internals functions *
  ***********************/
 
-static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent);
-static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent);
-static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent);
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args);
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
 
 /*******************
  * CNode functions *
@@ -330,32 +329,34 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev)
  * @param lev: hash level.
  * @return On success compresed cnode wrapped by a new main_node is returned, otherwise NULL is returned.
  **/
-static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_main_node, cnode_t* old_cnode, int lev, thread_args_t* thread_args)
+static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args)
 {
     main_node_t* new_main_node  = NULL;
-    branch_t*    curr_branch    = NULL;
-    branch_t*    new_branch     = NULL;
     int32_t      delete_map     = 0;
 
     MALLOC(new_main_node, main_node_t);
-    cnode_t new_cnode           = *old_cnode;
     new_main_node->type         = CNODE;
-    new_main_node->node.cnode   = new_cnode;
+    new_main_node->node.cnode   = old_main_node->node.cnode;
 
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
     {
-        if (new_cnode.array[i] != NULL)
+        if (new_main_node->node.cnode.array[i] != NULL)
         {
-            curr_branch = new_cnode.array[i];
+            branch_t* curr_branch = new_main_node->node.cnode.array[i];
+            PLACE_TMP_HP(thread_args, curr_branch);
+            if (old_main_node->node.cnode.marked)
+            {
+                goto CLEANUP;
+            }
             if (curr_branch->type == INODE && curr_branch->node.inode.main->type == TNODE)
             {
-                new_branch = resurrect(&(curr_branch->node.inode));
+                branch_t* new_branch = resurrect(&(curr_branch->node.inode));
                 if (new_branch == NULL)
                 {
                     FAIL("Failed to resurrect");
                 }
-                new_cnode.array[i] = new_branch;
+                new_main_node->node.cnode.array[i] = new_branch;
                 delete_map |= 1 << i;
             }
         }
@@ -370,7 +371,7 @@ static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_ma
     {
         if (delete_map & (1 << i))
         {
-            branch_t* branch = old_cnode->array[i];
+            branch_t* branch = old_main_node->node.cnode.array[i];
             branch->node.inode.marked = 1;
         }
     }
@@ -379,15 +380,15 @@ static main_node_t* to_compressed(main_node_t** cas_address, main_node_t* old_ma
     {
         if (delete_map & (1 << i))
         {
-            branch_t* branch = old_cnode->array[i];
+            branch_t* branch = old_main_node->node.cnode.array[i];
             add_to_free_list(thread_args, branch);
         }
     }
     add_to_free_list(thread_args, old_main_node);
+    return;
 
 CLEANUP:
     main_node_free(new_main_node);
-    return NULL;
 }
 
 /**
@@ -401,10 +402,7 @@ static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
     main_node_t* old_main_node = inode->main;
     if (inode->main->type == CNODE)
     {
-        main_node_t* new_main_node = to_compressed(&(inode->main), old_main_node, &(old_main_node->node.cnode), lev);
-        if (new_main_node != NULL)
-        {
-        }
+        compress(&(inode->main), old_main_node, lev, thread_args);
     }
 }
 
@@ -812,7 +810,7 @@ CLEANUP:
  * @param parent
  * @return On failure FAILED is returned, otherwise OK is returned if (`key`, `value`) was inserted, or RESTART if the insert should be called again.
  */
-static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent)
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args)
 {
     if (inode->main == NULL)
     {
@@ -847,7 +845,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         {
         case INODE:
             // INode - recurively insert.
-            return internal_insert(&(branch->node.inode), key, value, lev + W, inode);
+            return internal_insert(&(branch->node.inode), key, value, lev + W, inode, thread_args);
         case SNODE:
             if (key == branch->node.snode.key)
             {
@@ -869,7 +867,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             break;
         }
     case TNODE:
-        clean(parent, lev - W);
+        clean(parent, lev - W, thread_args);
         break;
     case LNODE:
     {
@@ -905,11 +903,11 @@ CLEANUP:
  * @param value
  * @return On success, OK is returned, otherwise FAILED is returned.
  **/
-static int ctrie_insert(ctrie_t* ctrie, int key, int value)
+static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* thread_args)
 {
     int res = RESTART;
     do {
-        res = internal_insert(ctrie->inode, key, value, 0, NULL);
+        res = internal_insert(ctrie->inode, key, value, 0, NULL, thread_args);
     }
     while (res == RESTART);
     return res;
@@ -950,7 +948,7 @@ CLEANUP:
  * @param parent: parent inode of `inode`.
  * @return On failure, FAILED is returned, otherwise if `key` was removed its value is returned, if `key` couldn't be found NOTFOUND is returned, RESTART my be the result if `internal_remove` shoud be called again.
  **/
-static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
 {
     if (inode->main == NULL)
     {
@@ -983,7 +981,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
             switch (branch->type) {
                 case INODE:
                     // INode - recursively remove.
-                    res = internal_remove(&(branch->node.inode), key, lev + W, inode);
+                    res = internal_remove(&(branch->node.inode), key, lev + W, inode, thread_args);
                     break;
                 case SNODE:
                     if (key != branch->node.snode.key) {
@@ -1013,11 +1011,10 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent)
             return res;
         }
         case TNODE:
-            clean(parent, lev - W);
+            clean(parent, lev - W, thread_args);
             return RESTART;
         case LNODE:
         {
-            int error = 0;
             int old_value = 0;
             main_node_t* new_main_node = NULL;
             int res = lnode_remove(main_node, key, &new_main_node, &old_value);
@@ -1053,11 +1050,11 @@ CLEANUP:
  * @param key: key to be removed.
  * @return On failure FAILED is returned, otherwise, if `key` was found, its value is returned and if not NOTFOUND is returned.
  **/
-static int ctrie_remove(ctrie_t* ctrie, int key)
+static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
 {
     int res = RESTART;
     do {
-        res = internal_remove(ctrie->inode, key, 0, NULL);
+        res = internal_remove(ctrie->inode, key, 0, NULL, thread_args);
     } while (res == RESTART);
     return res;
 }
