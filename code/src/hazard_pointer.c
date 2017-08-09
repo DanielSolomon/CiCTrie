@@ -1,3 +1,4 @@
+#include <hazard_pointer.h>
 #include "hazard_pointer.h"
 
 void place_hazard_pointer(hp_list_t* hp_list, void* arg)
@@ -11,9 +12,14 @@ void place_hazard_pointer(hp_list_t* hp_list, void* arg)
     FENCE;
 }
 
-void place_temporary_hazard_pointer(hp_list_t* hp_list, void* arg)
+void place_list_hazard_pointer(hp_list_t* hp_list, void* arg)
 {
-    hp_list->temporary_hazard_pointer = arg;
+    hp_list->list_hazard_pointers[hp_list->next_list_hp] = arg;
+    hp_list->next_list_hp++;
+    if (hp_list->next_list_hp == MAX_LIST_HAZARD_POINTERS)
+    {
+        hp_list->next_list_hp = 0;
+    }
     FENCE;
 }
 
