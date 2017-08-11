@@ -187,7 +187,10 @@ static void main_node_free(main_node_t* main_node)
         case CNODE:
             for (i = 0; i < MAX_BRANCHES; i++)
             {
-                branch_free(main_node->node.cnode.array[i]);
+                if (main_node->node.cnode.bmp & (1 << i))
+                {
+                    branch_free(main_node->node.cnode.array[i]);
+                }
             }
             break;
         case TNODE:
@@ -391,6 +394,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         {
             branch_t* branch = old_main_node->node.cnode.array[i];
             add_to_free_list(thread_args, branch);
+            add_to_free_list(thread_args, branch->node.inode.main);
         }
     }
     add_to_free_list(thread_args, old_main_node);
@@ -817,7 +821,6 @@ DONE:
     if ((*new_main_node)->node.lnode.next == NULL)
     {
         tnode_t tnode = entomb(&((*new_main_node)->node.lnode.snode));
-        lnode_free(&((*new_main_node)->node.lnode));
         (*new_main_node)->type = TNODE;
         (*new_main_node)->node.tnode = tnode;
     }
@@ -894,7 +897,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             else
             {
                 snode_t new_snode = { .key = key, .value = value };
-                child = create_branch(lev, &(branch->node.snode), &new_snode);
+                child = create_branch(lev + W, &(branch->node.snode), &new_snode);
                 if (child == NULL)
                 {
                     return FAILED;
@@ -927,12 +930,14 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 while (ptr != NULL)
                 {
                     ptr->marked = 1;
+                    ptr = ptr->next;
                 }
                 FENCE;
                 ptr = main_node->node.lnode.next;
                 while (ptr != NULL)
                 {
                     add_to_free_list(thread_args, ptr);
+                    ptr = ptr->next;
                 }
                 add_to_free_list(thread_args, main_node);
                 return OK;
@@ -1116,12 +1121,14 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                     while (ptr != NULL)
                     {
                         ptr->marked = 1;
+                        ptr = ptr->next;
                     }
                     FENCE;
                     ptr = main_node->node.lnode.next;
                     while (ptr != NULL)
                     {
                         add_to_free_list(thread_args, ptr);
+                        ptr = ptr->next;
                     }
                     add_to_free_list(thread_args, main_node);
                     return old_value;

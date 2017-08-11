@@ -4,7 +4,7 @@
 
 #define W 5
 // The maximun number of branches going out of a CNode. Must match the bitmap size.
-#define MAX_BRANCHES (2 << W)
+#define MAX_BRANCHES (1 << W)
 
 
 // TODO Consider change all complicated objects to pointers (for efficiency [copy by value] and generalizing cases).
