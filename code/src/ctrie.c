@@ -736,7 +736,6 @@ static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, threa
     new_lnode->snode    = old_lnode->snode;
     new_lnode->next     = NULL;
 
-    lnode_t* ptr = old_lnode;
     while (old_lnode->next)
     {
         PLACE_LIST_HP(thread_args, old_lnode->next);
@@ -924,7 +923,18 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             }
             if (CAS(&(inode->main), main_node, new_main_node))
             {
-                // TODO: free lnode + main_node.
+                lnode_t* ptr = main_node->node.lnode.next;
+                while (ptr != NULL)
+                {
+                    ptr->marked = 1;
+                }
+                FENCE;
+                ptr = main_node->node.lnode.next;
+                while (ptr != NULL)
+                {
+                    add_to_free_list(thread_args, ptr);
+                }
+                add_to_free_list(thread_args, main_node);
                 return OK;
             }
             else
@@ -978,8 +988,6 @@ static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
     new_main_node->node.cnode.bmp          &= ~flag;
     new_main_node->node.cnode.array[pos]    = NULL;
     new_main_node->node.cnode.length--;
-
-    // TODO free the deleted branch.
 
     return new_main_node;
 
@@ -1071,6 +1079,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             add_to_free_list(thread_args, old_branch);
                         }
                         add_to_free_list(thread_args, branch);
+                        add_to_free_list(thread_args, main_node);
                     }
                 default:
                     break;
@@ -1103,7 +1112,18 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             case OK:
                 if (CAS(&(inode->main), main_node, new_main_node))
                 {
-                    // TODO: free lnode + main_node.
+                    lnode_t* ptr = main_node->node.lnode.next;
+                    while (ptr != NULL)
+                    {
+                        ptr->marked = 1;
+                    }
+                    FENCE;
+                    ptr = main_node->node.lnode.next;
+                    while (ptr != NULL)
+                    {
+                        add_to_free_list(thread_args, ptr);
+                    }
+                    add_to_free_list(thread_args, main_node);
                     return old_value;
                 }
                 else
