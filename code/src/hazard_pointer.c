@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <unistd.h>
 #include "hazard_pointer.h"
 #include "common.h"
 
@@ -124,8 +125,22 @@ void add_to_free_list(thread_args_t* thread_args, void* arg)
     // TODO is this ok?
     while (free_list->length == FREE_LIST_SIZE)
     {
+        sleep(1);
         scan(thread_args);
     }
     free_list->free_list[free_list->length] = arg;
     free_list->length++;
+}
+
+void release_hazard_pointers(hp_list_t* hp_list)
+{
+    int i = 0;
+    for (i = 0; i < MAX_HAZARD_POINTERS; i++)
+    {
+        hp_list->hazard_pointers[i] = NULL;
+    }
+    for (i = 0; i < MAX_LIST_HAZARD_POINTERS; i++)
+    {
+        hp_list->list_hazard_pointers[i] = NULL;
+    }
 }

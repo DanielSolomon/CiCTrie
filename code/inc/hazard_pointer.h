@@ -33,4 +33,5 @@ typedef struct {
 
 void place_hazard_pointer(hp_list_t* hp_list, void* arg);
 void place_list_hazard_pointer(hp_list_t* hp_list, void* arg);
+void release_hazard_pointers(hp_list_t* hp_list);
 void add_to_free_list(thread_args_t* thread_args, void* arg);
