@@ -30,11 +30,17 @@ static int compare(const void* left_pointer, const void* right_pointer)
     void* left = *((void**)left_pointer);
     void* right = *((void**)right_pointer);
     if (left < right)
+    {
         return -1;
+    }
     else if (left == right)
+    {
         return 0;
+    }
     else
+    {
         return 1;
+    }
 }
 
 /**
