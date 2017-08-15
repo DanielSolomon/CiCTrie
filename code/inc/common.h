@@ -3,9 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <sys/syscall.h>
+#include <fcntl.h>
 
 #define MESSAGE_SIZE (4096)
 
@@ -13,6 +15,7 @@
     char __BUFFER[MESSAGE_SIZE + 1] = {0};                                                      \
     snprintf(__BUFFER, MESSAGE_SIZE, "[%d] [%s: %d] %s.\n", (int)syscall(SYS_gettid), __FILE__, __LINE__, fmt); \
     printf(__BUFFER, ##__VA_ARGS__);                                                            \
+    fflush(stdout);\
 } while (0)   
 
 #define FAIL(fmt, ...) do {     \
@@ -26,6 +29,7 @@
     {                                                       \
         FAIL("failed allocating %d bytes", sizeof(type));   \
     }                                                       \
+    memset(var, 0, sizeof(type));                           \
 } while (0);
 
 void    free_them_all(int count, ...);

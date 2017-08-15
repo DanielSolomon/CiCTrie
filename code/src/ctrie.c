@@ -681,6 +681,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
 
     branch->type = INODE;
     branch->node.inode.main = main_node;
+    branch->node.inode.marked = 0;
     return branch;
 
 CLEANUP:
@@ -1081,6 +1082,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                         {
                             old_branch->node.inode.marked = 1;
                             FENCE;
+                            PRINT("u wot");
                             add_to_free_list(thread_args, old_branch);
                         }
                         add_to_free_list(thread_args, branch);
