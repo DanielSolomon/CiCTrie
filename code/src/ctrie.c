@@ -95,6 +95,7 @@ static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snod
         FAIL(msg);                                  \
     if (CAS(CASed, old, new))                       \
     {                                               \
+        DEBUG("CASed old %p and new %p", old, new); \
         old->node.cnode.marked = 1;                 \
         FENCE;                                      \
         add_to_free_list(thread_args, old);         \
@@ -287,6 +288,7 @@ static tnode_t entomb(snode_t* snode)
  **/
 static branch_t* resurrect(inode_t* inode)
 {
+    DEBUG("resurrecting inode %p", inode);
     if (inode->main->type != TNODE)
     {
         return NULL;
@@ -328,6 +330,7 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** ol
             main_node->node.tnode   = tnode;
         }
     }
+    DEBUG("contracted main node %p old branch %p", main_node, *old_branch);
     return main_node;
 }
 
@@ -375,6 +378,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     {
         goto CLEANUP;
     }
+    DEBUG("compressed main_node %p new main_node %p", old_main_node, new_main_node);
     if (old_branch != NULL)
     {
         old_main_node->node.cnode.marked = 1;
@@ -416,6 +420,7 @@ CLEANUP:
  **/
 static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
 {
+    DEBUG("cleaning inode %p", inode);
     main_node_t* old_main_node = inode->main;
     if (inode->main->type == CNODE)
     {
@@ -564,6 +569,7 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
  **/
 static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value)
 {
+    DEBUG("inserting %d %d to cnode %p", key, value, main_node);
     main_node_t*    new_main_node   = NULL;
     branch_t*       branch          = NULL;
     MALLOC(branch, branch_t);
@@ -596,6 +602,7 @@ CLEANUP:
 static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value)
 {
     // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
+    DEBUG("updating %d %d to cnode %p", key, value, main_node);
     return cnode_insert(main_node, pos, 0, key, value);
 }
 
@@ -608,6 +615,7 @@ static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int v
  **/
 static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
 {
+    DEBUG("updating branch %p in pos %d of cnode %p", branch, pos, main_node);
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
 
@@ -648,6 +656,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
         int pos2 = (hash(new_snode->key) >> lev) & 0x1f;
         if (pos1 == pos2)
         {
+            DEBUG("calling create_branch recursively");
             child = create_branch(lev + W, old_snode, new_snode);
             if (child == NULL)
             {
@@ -659,6 +668,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
         {
             MALLOC(sibling1, branch_t);
             MALLOC(sibling2, branch_t);
+            DEBUG("creating siblings %p %p", sibling1, sibling2);
             sibling1->type = SNODE;
             sibling2->type = SNODE;
             sibling1->node.snode = *old_snode;
@@ -673,6 +683,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
     else
     {
         MALLOC(next, lnode_t);
+        DEBUG("creating lnode %p", next);
         next->snode = *new_snode;
         main_node->type = LNODE;
         main_node->node.lnode.snode  = *old_snode;
@@ -682,6 +693,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
     branch->type = INODE;
     branch->node.inode.main = main_node;
     branch->node.inode.marked = 0;
+    DEBUG("created branch %p", branch);
     return branch;
 
 CLEANUP:
@@ -911,6 +923,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         default:
             break;
         }
+        break;
     case TNODE:
         clean(parent, lev - W, thread_args);
         break;
@@ -1164,8 +1177,3 @@ static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
     } while (res == RESTART);
     return res;
 }
-
-
-
-
-

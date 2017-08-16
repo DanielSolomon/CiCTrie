@@ -32,6 +32,12 @@
     memset(var, 0, sizeof(type));                           \
 } while (0);
 
+#ifdef _DEBUG
+#define DEBUG(...) PRINT(__VA_ARGS__)
+#else
+#define DEBUG(...)
+#endif
+
 void    free_them_all(int count, ...);
 int32_t highest_on_bit(uint32_t num);
 

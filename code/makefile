@@ -1,5 +1,5 @@
 CC          := gcc
-CFLAGS      := -Wall -Wno-format-security -pthread -g3
+CFLAGS      := -Wall -Wno-format-security -pthread -g3 -D _DEBUG
 PROJ_DIR    := $(shell dirname $(shell pwd))
 NAME        := $(shell basename $(PROJ_DIR))
 

@@ -127,6 +127,7 @@ CLEANUP:
 void add_to_free_list(thread_args_t* thread_args, void* arg)
 {
     free_list_t* free_list = thread_args->free_list;
+    DEBUG("adding %p to free_list", arg);
 
     // TODO is this ok?
     while (free_list->length == FREE_LIST_SIZE)
