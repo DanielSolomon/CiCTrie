@@ -40,7 +40,7 @@ static void main_node_free(main_node_t* main_node);
  * Clean functions *
  *******************/
 
-static void         clean        (volatile inode_t* inode, int lev, thread_args_t* thread_args);
+static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args);
 static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
 static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** old_branch);
@@ -57,24 +57,24 @@ static branch_t* resurrect(inode_t* inode);
  ***********************/
 
 static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
-static int internal_insert(volatile inode_t* inode, int key, int value, int lev, volatile inode_t* parent, thread_args_t* thread_args);
-static int internal_remove(volatile inode_t* inode, int key, int lev, volatile inode_t* parent, thread_args_t* thread_args);
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args);
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
 
 /*******************
  * CNode functions *
  *******************/
 
-static main_node_t* cnode_insert(volatile main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch);
-static main_node_t* cnode_update(volatile main_node_t* main_node, int pos, int key, int value, branch_t** new_branch);
-static main_node_t* cnode_update_branch(volatile main_node_t* main_node, int pos, volatile branch_t* branch);
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch);
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch);
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch);
 static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag);
 
 /*******************
  * LNode functions *
  *******************/
 
-static int lnode_insert(volatile main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args);
-static int lnode_copy  (volatile main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args);
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args);
+static int lnode_copy  (main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args);
 static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args);
 static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 
@@ -424,7 +424,7 @@ CLEANUP:
  * @param lev: hash level.
  * @note Assumes that inode and inode->main are protected with HP.
  **/
-static void clean(volatile inode_t* inode, int lev, thread_args_t* thread_args)
+static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
 {
     DEBUG("cleaning inode %p", inode);
     main_node_t* old_main_node = inode->main;
@@ -574,7 +574,7 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
  * @param value
  * @return On success an updated CNode is returned wrapped by main node, otherwise NULL is returned.
  **/
-static main_node_t* cnode_insert(volatile main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch)
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch)
 {
     DEBUG("inserting %d %d to cnode %p", key, value, main_node);
     main_node_t*    new_main_node   = NULL;
@@ -608,7 +608,7 @@ CLEANUP:
  * @param value
  * @return On success updated CNode wrapped by main node is returned, otherwise NULL is returned.
  **/
-static main_node_t* cnode_update(volatile main_node_t* main_node, int pos, int key, int value, branch_t** new_branch)
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch)
 {
     // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
     DEBUG("updating %d %d to cnode %p", key, value, main_node);
@@ -622,7 +622,7 @@ static main_node_t* cnode_update(volatile main_node_t* main_node, int pos, int k
  * @param branch: `branch` to be inserted.
  * @return On success updated CNode wrapped by a main node is returned.
  **/
-static main_node_t* cnode_update_branch(volatile main_node_t* main_node, int pos, volatile branch_t* branch)
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
 {
     DEBUG("updating branch %p in pos %d of cnode %p", branch, pos, main_node);
     main_node_t* new_main_node = NULL;
@@ -716,9 +716,9 @@ CLEANUP:
  * @param snode: snode to insert into lnode pointed by main_node.
  * @return On success new lnode is returned containing snode wrapped by main node, otherwise NULL is returned.
  **/
-static int lnode_insert(volatile main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args)
 {
-    volatile lnode_t*     next          = NULL;
+    lnode_t*     next          = NULL;
     int res = lnode_copy(main_node, new_main_node, thread_args);
     if (res != OK)
     {
@@ -745,7 +745,7 @@ CLEANUP:
  * @param main_node: main node pointer points to a LNode.
  * @return On success returns a full copy of lnode wrapped by main node, otherwise NULL is returned.
  */
-static int lnode_copy(volatile main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args)
 {
     int res = FAILED;
     *new_main_node = NULL;
@@ -757,8 +757,8 @@ static int lnode_copy(volatile main_node_t* main_node, main_node_t** new_main_no
     }
 
     (*new_main_node)->type = LNODE;
-    volatile lnode_t* new_lnode  = &((*new_main_node)->node.lnode);
-    volatile lnode_t* old_lnode  = &(main_node->node.lnode);
+    lnode_t* new_lnode  = &((*new_main_node)->node.lnode);
+    lnode_t* old_lnode  = &(main_node->node.lnode);
     new_lnode->snode    = old_lnode->snode;
     new_lnode->next     = NULL;
 
@@ -862,9 +862,9 @@ CLEANUP:
  * @param parent
  * @return On failure FAILED is returned, otherwise OK is returned if (`key`, `value`) was inserted, or RESTART if the insert should be called again.
  */
-static int internal_insert(volatile inode_t* inode, int key, int value, int lev, volatile inode_t* parent, thread_args_t* thread_args)
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args)
 {
-    volatile main_node_t* main_node  = inode->main;
+    main_node_t* main_node  = inode->main;
 
     if (main_node == NULL)
     {
@@ -873,8 +873,8 @@ static int internal_insert(volatile inode_t* inode, int key, int value, int lev,
 
     int pos  = 0;
     int flag = 0;
-    volatile branch_t*    branch     = NULL;
-    volatile branch_t*    child      = NULL;
+    branch_t*    branch     = NULL;
+    branch_t*    child      = NULL;
 
     PLACE_HP(thread_args, main_node);
     if (inode->marked || inode->main != main_node)
@@ -1034,9 +1034,9 @@ CLEANUP:
  * @param parent: parent inode of `inode`.
  * @return On failure, FAILED is returned, otherwise if `key` was removed its value is returned, if `key` couldn't be found NOTFOUND is returned, RESTART my be the result if `internal_remove` shoud be called again.
  **/
-static int internal_remove(volatile inode_t* inode, int key, int lev, volatile inode_t* parent, thread_args_t* thread_args)
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
 {
-    volatile main_node_t* main_node  = inode->main;
+    main_node_t* main_node  = inode->main;
 
     if (main_node == NULL)
     {

@@ -124,7 +124,7 @@ CLEANUP:
     }
 }
 
-void add_to_free_list(volatile thread_args_t* thread_args, void* arg)
+void add_to_free_list(thread_args_t* thread_args, void* arg)
 {
     free_list_t* free_list = thread_args->free_list;
     DEBUG("adding %p to free_list", arg);
