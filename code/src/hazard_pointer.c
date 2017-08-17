@@ -124,14 +124,19 @@ CLEANUP:
     }
 }
 
-void add_to_free_list(thread_args_t* thread_args, void* arg)
+void add_to_free_list(volatile thread_args_t* thread_args, void* arg)
 {
     free_list_t* free_list = thread_args->free_list;
     DEBUG("adding %p to free_list", arg);
 
     // TODO is this ok?
+    if (free_list->length == FREE_LIST_SIZE)
+    {
+        scan(thread_args);
+    }
     while (free_list->length == FREE_LIST_SIZE)
     {
+	DEBUG("sleeping! free_list length is %d, FREE_LIST_SIZE is %d", free_list->length, FREE_LIST_SIZE);
         sleep(1);
         scan(thread_args);
     }
