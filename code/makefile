@@ -1,5 +1,5 @@
 CC          := gcc
-CFLAGS      := -Wall -Wno-format-security -pthread -g3 -D _DEBUG -D NUM_OF_THREADS=4
+CFLAGS      := -Wall -Wno-format-security -pthread -g3 -D NUM_OF_THREADS=4 -D NO_PRINT
 PROJ_DIR    := $(shell dirname $(shell pwd))
 NAME        := $(shell basename $(PROJ_DIR))
 
