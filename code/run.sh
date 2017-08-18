@@ -1,7 +1,12 @@
 #!/bin/bash
 ulimit -c unlimited
-while true; do
-    echo "Running..."
+echo "Compiling..."
+make
+count=1
+while true
+do
+    echo "Running $count:..."
+    count=$((count + 1))
     ./CiCTrie scripts/sample.bin > output.txt && continue
     echo "Failed!" 
     exit 1
