@@ -456,8 +456,8 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
         cnode_t*    parent_cnode    = &(parent_main_node->node.cnode);
         branch_t*   branch          = parent_cnode->array[pos];
         if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) {
-            branch_t* new_branch;
-            new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, new_branch);
+            branch_t* new_branch = NULL;
+            new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, &new_branch);
             if (new_main_node == NULL) {
                 FAIL("Failed to update cnode");
             }
