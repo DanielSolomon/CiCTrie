@@ -465,17 +465,16 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
             new_main_node = to_contracted(new_main_node, lev, &old_branch);
             if (!CAS(&(parent->main), parent_main_node, new_main_node))
             {
-                main_node_free(new_main_node);
+                free(new_main_node);
+                branch_free(new_branch);
                 clean_parent(parent, inode, key_hash, lev, thread_args);
             }
-            old_branch->node.inode.marked = 1;
-            FENCE;
             add_to_free_list(thread_args, old_branch);
         }
         return;
     }
 CLEANUP:
-    main_node_free(new_main_node);
+    return;
 }
 
 /**
@@ -1100,14 +1099,11 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                         if (!CAS(&(inode->main), main_node, new_main_node))
                         {
                             res = RESTART;
-                            main_node_free(new_main_node);
+                            free(new_main_node);
                             goto DONE;
                         }
                         if (old_branch != NULL)
                         {
-                            old_branch->node.inode.marked = 1;
-                            FENCE;
-                            PRINT("u wot");
                             add_to_free_list(thread_args, old_branch);
                         }
                         add_to_free_list(thread_args, branch);
