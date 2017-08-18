@@ -1,4 +1,8 @@
+#include <errno.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "hazard_pointer.h"
 #include "nodes.h"
 #include "common.h"
@@ -13,32 +17,6 @@ typedef struct {
     int             offset;
     int             size;
 } insert_thread_arg_t;
-
-void t1(thread_args_t* thread_arg)
-{
-    ctrie->insert(ctrie, 1, 100, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    ctrie->insert(ctrie, 2, 200, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    ctrie->remove(ctrie, 2, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    release_hazard_pointers(thread_arg->hp_lists[thread_arg->index]);
-}
-
-void t2(thread_args_t* thread_arg)
-{
-    ctrie->insert(ctrie, 1, 300, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    ctrie->insert(ctrie, 2, 400, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    ctrie->remove(ctrie, 2, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    release_hazard_pointers(thread_arg->hp_lists[thread_arg->index]);
-}
 
 void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
 {
@@ -58,29 +36,39 @@ void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
 
 int main(int argc, char* argv[])
 {
-    PRINT("Start");
+    int i       = 0;
+    FILE* fp    = NULL;
+    char* data  = NULL;
 
-    hp_list_t hp_list1 = {.next_hp=0, .next_list_hp=0};
-    hp_list_t hp_list2 = {.next_hp=0, .next_list_hp=0};
-    hp_list_t* hp_array[2] = {
-        &hp_list1,
-        &hp_list2,
-    };
-    free_list_t free_list1 = {.length=0};
-    thread_args_t thread1_arg = {
-        .hp_lists = hp_array,
-        .free_list = &free_list1,
-        .index = 0,
-        .num_of_threads = 2,
-    };
-    free_list_t free_list2 = {.length=0};
-    thread_args_t thread2_arg = {
-        .hp_lists = hp_array,
-        .free_list = &free_list2,
-        .index = 1,
-        .num_of_threads = 2,
-    };
-    FILE* fp = NULL;
+    if (argc != 2)
+    {
+        PRINT("Usage: %s <action_file>", argv[0]);
+        return -1;
+    }
+
+    PRINT("Start");
+    PRINT("Setting up %d threads", NUM_OF_THREADS);
+
+    hp_list_t*  hp_array[NUM_OF_THREADS]    = {0};
+    hp_list_t   hp_lists[NUM_OF_THREADS]    = {0};
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        hp_array[i] = &(hp_lists[i]);
+    }
+
+    free_list_t free_lists[NUM_OF_THREADS]      = {0};
+    thread_args_t threads_args[NUM_OF_THREADS]  = {0};
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        threads_args[i] = (thread_args_t) {
+            .hp_lists   = hp_array,
+            .free_list  = &(free_lists[i]),
+            .index      = i,
+            .num_of_threads = NUM_OF_THREADS,
+        };
+    }
+
     ctrie = create_ctrie();
     if (ctrie == NULL)
     {
@@ -92,32 +80,48 @@ int main(int argc, char* argv[])
     {
         FAIL("Failed to fopen %s", argv[1]);
     }
-    char buffer[804] = {0};
-    fread(buffer, 804, 1, fp);
-    inserts_t* inserts = (inserts_t*) buffer;
+    struct stat file_status = {0};
+    if (fstat(fileno(fp), &file_status) < 0)
+    {
+        FAIL("Failed to stat file: %s (%d)", argv[1], errno);
+    }
+    PRINT("File size is: %d", file_status.st_size);
+    data = malloc(file_status.st_size);
+    if (data == NULL)
+    {
+        FAIL("Failed to allocate %d bytes for data", file_status.st_size);
+    }
+    if (fread(data, file_status.st_size, 1, fp) != 1)
+    {
+        FAIL("Failed to read %d bytes from fp", file_status.st_size);
+    }
 
-    insert_thread_arg_t insert_thread1_arg = {
-        .thread_arg = &thread1_arg,
-        .inserts    = inserts,
-        .offset     = 0,
-        .size       = 50,
-    };
+    inserts_t* inserts = (inserts_t*) data;
 
-    insert_thread_arg_t insert_thread2_arg = {
-        .thread_arg = &thread2_arg,
-        .inserts    = inserts,
-        .offset     = 50,
-        .size       = 50,
-    };
+    insert_thread_arg_t insert_threads_args[NUM_OF_THREADS] = {0};
 
-    pthread_t tid1 = 0;
-    pthread_t tid2 = 0; 
-    //pthread_create(&tid1, NULL, (void*(*)(void*))t1, &thread1_arg);
-    //pthread_create(&tid2, NULL, (void*(*)(void*))t2, &thread2_arg);
-    pthread_create(&tid1, NULL, (void*(*)(void*))insert_test_thread, &insert_thread1_arg);
-    pthread_create(&tid2, NULL, (void*(*)(void*))insert_test_thread, &insert_thread2_arg);
-    pthread_join(tid1, NULL);
-    pthread_join(tid2, NULL);
+    int total_actions = inserts->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        insert_threads_args[i] = (insert_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .inserts    = inserts,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))insert_test_thread, &(insert_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
 
 CLEANUP:
 
@@ -126,18 +130,23 @@ CLEANUP:
         ctrie->free(ctrie);
     }
 
-    int i=0;
-    for (i = 0; i < free_list1.length; i++)
-    {
-        free(free_list1.free_list[i]);
-    }
-    for (i = 0; i < free_list2.length; i++)
-    {
-        free(free_list2.free_list[i]);
-    }
     if (fp != NULL)
     {
         fclose(fp);
+    }
+
+    if (data != NULL)
+    {
+        free(data);
+    }
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            free(threads_args[i].free_list->free_list[j]);
+        }
     }
 
     return 0;
