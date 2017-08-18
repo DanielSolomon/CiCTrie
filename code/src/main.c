@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include "hazard_pointer.h"
 #include "nodes.h"
 #include "common.h"
 #include "ctrie.h"

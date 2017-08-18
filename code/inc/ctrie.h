@@ -1,7 +1,7 @@
 #pragma once
 
 #include <stdint.h>
-#include "nodes.h"
+
 #include "hazard_pointer.h"
 
 typedef struct ctrie_t

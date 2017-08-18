@@ -11,11 +11,11 @@
 
 #define MESSAGE_SIZE (4096)
 
-#define PRINT(fmt, ...) do {                                                                    \
-    char __BUFFER[MESSAGE_SIZE + 1] = {0};                                                      \
-    snprintf(__BUFFER, MESSAGE_SIZE, "[%d] [%s: %d] %s.\n", (int)syscall(SYS_gettid), __FILE__, __LINE__, fmt); \
-    printf(__BUFFER, ##__VA_ARGS__);                                                            \
-    fflush(stdout);\
+#define PRINT(fmt, ...) do {                                                                                    \
+    char __BUFFER[MESSAGE_SIZE + 1] = {0};                                                                      \
+    snprintf(__BUFFER, MESSAGE_SIZE, "[%d] [%s: %d] %s.\n", (int) syscall(SYS_gettid), __FILE__, __LINE__, fmt);\
+    printf(__BUFFER, ##__VA_ARGS__);                                                                            \
+    fflush(stdout);                                                                                             \
 } while (0)   
 
 #define FAIL(fmt, ...) do {     \

@@ -1,9 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <nodes.h>
 
+#include "nodes.h"
 #include "common.h"
 #include "ctrie.h"
+#include "hazard_pointer.h"
 
 /*************
  * CONSTANTS *
