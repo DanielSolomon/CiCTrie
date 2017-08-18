@@ -34,11 +34,107 @@ void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
     PRINT("after release");
 }
 
+void insert_test(inserts_t* inserts, thread_args_t threads_args[])
+{
+    int i;
+    insert_thread_arg_t insert_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = inserts->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        insert_threads_args[i] = (insert_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .inserts    = inserts,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))insert_test_thread, &(insert_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            free(threads_args[i].free_list->free_list[j]);
+        }
+    }
+}
+
+char* read_file(const char* path)
+{
+    FILE* fp    = NULL;
+    char* data  = NULL;
+
+    fp = fopen(path, "r");
+    if (fp == NULL)
+    {
+        FAIL("Failed to fopen %s", path);
+    }
+    struct stat file_status = {0};
+    if (fstat(fileno(fp), &file_status) < 0)
+    {
+        FAIL("Failed to stat file: %s (%d)", path, errno);
+    }
+    PRINT("File size is: %d", file_status.st_size);
+    data = malloc(file_status.st_size);
+    if (data == NULL)
+    {
+        FAIL("Failed to allocate %d bytes for data", file_status.st_size);
+    }
+    if (fread(data, file_status.st_size, 1, fp) != 1)
+    {
+        FAIL("Failed to read %d bytes from fp", file_status.st_size);
+    }
+
+    fclose(fp);
+    return data;
+
+CLEANUP:
+    
+    if (fp != NULL)
+    {
+        fclose(fp);
+    }
+    if (data != NULL)
+    {
+        free(data);
+    }
+    return NULL;
+}
+
+void handle_insert(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    inserts_t* inserts = (inserts_t*) data;
+    insert_test(inserts, threads_args);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
 int main(int argc, char* argv[])
 {
     int i       = 0;
-    FILE* fp    = NULL;
-    char* data  = NULL;
 
     if (argc != 2)
     {
@@ -75,78 +171,13 @@ int main(int argc, char* argv[])
         FAIL("Failed to create ctrie");
     }
 
-    fp = fopen(argv[1], "r");
-    if (fp == NULL)
-    {
-        FAIL("Failed to fopen %s", argv[1]);
-    }
-    struct stat file_status = {0};
-    if (fstat(fileno(fp), &file_status) < 0)
-    {
-        FAIL("Failed to stat file: %s (%d)", argv[1], errno);
-    }
-    PRINT("File size is: %d", file_status.st_size);
-    data = malloc(file_status.st_size);
-    if (data == NULL)
-    {
-        FAIL("Failed to allocate %d bytes for data", file_status.st_size);
-    }
-    if (fread(data, file_status.st_size, 1, fp) != 1)
-    {
-        FAIL("Failed to read %d bytes from fp", file_status.st_size);
-    }
-
-    inserts_t* inserts = (inserts_t*) data;
-
-    insert_thread_arg_t insert_threads_args[NUM_OF_THREADS] = {0};
-
-    int total_actions = inserts->n;
-    int size = total_actions / NUM_OF_THREADS;
-
-    for (i = 0; i < NUM_OF_THREADS; i++)
-    {
-        insert_threads_args[i] = (insert_thread_arg_t) {
-            .thread_arg = &(threads_args[i]),
-            .inserts    = inserts,
-            .offset     = i * size,
-            .size       = size,
-        };
-    }
-
-    pthread_t tids[NUM_OF_THREADS];
-    for (i = 0; i < NUM_OF_THREADS; i++)
-    {
-        pthread_create(&(tids[i]), NULL, (void*(*)(void*))insert_test_thread, &(insert_threads_args[i]));
-    }
-    for (i = 0; i < NUM_OF_THREADS; i++)
-    {
-        pthread_join(tids[i], NULL);
-    }
+    handle_insert(argv[1], threads_args);
 
 CLEANUP:
 
     if (ctrie != NULL)
     {
         ctrie->free(ctrie);
-    }
-
-    if (fp != NULL)
-    {
-        fclose(fp);
-    }
-
-    if (data != NULL)
-    {
-        free(data);
-    }
-
-    int j = 0;
-    for (i = 0; i < NUM_OF_THREADS; i++)
-    {
-        for (j = 0; j < threads_args[i].free_list->length; j++)
-        {
-            free(threads_args[i].free_list->free_list[j]);
-        }
     }
 
     return 0;
