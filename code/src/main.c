@@ -19,6 +19,20 @@ typedef struct {
     int             size;
 } insert_thread_arg_t;
 
+typedef struct {
+    thread_args_t*  thread_arg;
+    lookups_t*      lookups;
+    int             offset;
+    int             size;
+} lookup_thread_arg_t;
+
+typedef struct {
+    thread_args_t*  thread_arg;
+    removes_t*      removes;
+    int             offset;
+    int             size;
+} remove_thread_arg_t;
+
 void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
 {
     int i;
@@ -32,6 +46,38 @@ void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
     }
     PRINT("out of for");
     release_hazard_pointers(insert_thread_arg->thread_arg->hp_lists[insert_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+void lookup_test_thread(lookup_thread_arg_t* lookup_thread_arg)
+{
+    int i;
+    int size    = lookup_thread_arg->size;
+    int offset  = lookup_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        lookup_t lookup = lookup_thread_arg->lookups->lookups[offset + i];
+        ctrie->lookup(ctrie, lookup.key, lookup_thread_arg->thread_arg);
+        PRINT("lookuped %d key=%d", i, lookup.key);
+    }
+    PRINT("out of for");
+    release_hazard_pointers(lookup_thread_arg->thread_arg->hp_lists[lookup_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+void remove_test_thread(remove_thread_arg_t* remove_thread_arg)
+{
+    int i;
+    int size    = remove_thread_arg->size;
+    int offset  = remove_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        remove_t remove = remove_thread_arg->removes->removes[offset + i];
+        ctrie->remove(ctrie, remove.key, remove_thread_arg->thread_arg);
+        PRINT("removed %d key=%d", i, remove.key);
+    }
+    PRINT("out of for");
+    release_hazard_pointers(remove_thread_arg->thread_arg->hp_lists[remove_thread_arg->thread_arg->index]);
     PRINT("after release");
 }
 
@@ -70,6 +116,85 @@ void insert_test(inserts_t* inserts, thread_args_t threads_args[])
         {
             free(threads_args[i].free_list->free_list[j]);
         }
+        threads_args[i].free_list->length = 0;
+    }
+}
+
+void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
+{
+    int i;
+    lookup_thread_arg_t lookup_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = lookups->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        lookup_threads_args[i] = (lookup_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .lookups    = lookups,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))lookup_test_thread, &(lookup_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+}
+
+void remove_test(removes_t* removes, thread_args_t threads_args[])
+{
+    int i;
+    remove_thread_arg_t remove_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = removes->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        remove_threads_args[i] = (remove_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .removes    = removes,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))remove_test_thread, &(remove_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
     }
 }
 
@@ -133,13 +258,49 @@ CLEANUP:
     }
 }
 
+void handle_lookup(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    lookups_t* lookups = (lookups_t*) data;
+    lookup_test(lookups, threads_args);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
+void handle_remove(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    removes_t* removes = (removes_t*) data;
+    remove_test(removes, threads_args);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
 int main(int argc, char* argv[])
 {
-    int i       = 0;
+    int i = 0;
 
-    if (argc != 2)
+    if ((argc & 1) == 0)
     {
-        PRINT("Usage: %s <action_file>", argv[0]);
+        PRINT("Usage: %s [<insert|lookup|remove> <action_file>]*", argv[0]);
         return -1;
     }
 
@@ -172,7 +333,31 @@ int main(int argc, char* argv[])
         FAIL("Failed to create ctrie");
     }
 
-    handle_insert(argv[1], threads_args);
+    for (i = 1; i < argc; i += 2)
+    {
+        if (strcmp(argv[i], "insert") == 0)
+        {
+            PRINT("Handle insert..");
+            handle_insert(argv[i + 1], threads_args);
+            PRINT("Handled insert");
+        }
+        else if (strcmp(argv[i], "lookup") == 0)
+        {
+            PRINT("Handle lookup..");
+            handle_lookup(argv[i + 1], threads_args);
+            PRINT("Handled lookup");
+        }
+        else if (strcmp(argv[i], "remove") == 0)
+        {
+            PRINT("Handle remove..");
+            handle_remove(argv[i + 1], threads_args);
+            PRINT("Handled remove");
+        }
+        else
+        {
+            FAIL("Unknown action: %s", argv[i]);
+        }
+    }
 
 CLEANUP:
 
