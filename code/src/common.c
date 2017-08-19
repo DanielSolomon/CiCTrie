@@ -22,7 +22,7 @@ void free_them_all(int count, ...)
 int32_t highest_on_bit(uint32_t num)
 {
     int32_t i;
-    for (i = NUM_OF_BITS_IN_BYTE * sizeof(uint32_t); i >= 0; i--)
+    for (i = NUM_OF_BITS_IN_BYTE * sizeof(uint32_t) - 1; i >= 0; i--)
     {
         if (num & (1 << i))
         {
