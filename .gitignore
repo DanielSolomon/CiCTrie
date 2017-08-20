@@ -62,3 +62,7 @@ dkms.conf
 # CLion shit
 */cmake-build-debug/*
 */.idea/*
+
+# Scala
+target
+*.class
