@@ -331,7 +331,7 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** ol
         int index = highest_on_bit(cnode->bmp);
         if (cnode->array[index]->type == SNODE)
         {
-            tnode_t tnode = entomb(&(cnode->array[index]->node.snode));
+            tnode_t tnode           = entomb(&(cnode->array[index]->node.snode));
             *old_branch             = cnode->array[index];
             main_node->type         = TNODE;
             main_node->node.tnode   = tnode;
@@ -455,10 +455,12 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
         int flag = 1 << pos;
         cnode_t*    parent_cnode    = &(parent_main_node->node.cnode);
         branch_t*   branch          = parent_cnode->array[pos];
-        if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) {
+        if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) 
+        {
             branch_t* new_branch = NULL;
             new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, &new_branch);
-            if (new_main_node == NULL) {
+            if (new_main_node == NULL) 
+            {
                 FAIL("Failed to update cnode");
             }
             branch_t* old_branch = NULL;
@@ -469,7 +471,23 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
                 branch_free(new_branch);
                 clean_parent(parent, inode, key_hash, lev, thread_args);
             }
-            add_to_free_list(thread_args, old_branch);
+            // CR: Can it happen? can old_branch be null?
+            if (old_branch != NULL)
+            {
+                add_to_free_list(thread_args, old_branch);
+            }
+            // TODO needed?
+            if (parent_main_node != NULL)
+            {
+                add_to_free_list(thread_args, parent_main_node);
+            }
+            // TODO needed?
+            if (branch != NULL)
+            {
+                add_to_free_list(thread_args, branch);
+                add_to_free_list(thread_args, inode);
+                add_to_free_list(thread_args, main_node);
+            }
         }
         return;
     }
