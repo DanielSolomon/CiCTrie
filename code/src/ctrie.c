@@ -44,7 +44,7 @@ static void main_node_free(main_node_t* main_node);
 static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args);
 static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
-static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** old_branch);
+static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
 
 /*******************
  * Death functions *
@@ -274,7 +274,7 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
  **/
 static int hash(int key)
 {
-    // TODO: hash
+    //return key / 10;
     return key;
 }
 
@@ -318,17 +318,22 @@ CLEANUP:
  * @param lev: hash level.
  * @return if needed returns new contracted main node, otherwise old main node is returned.
  **/
-static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** old_branch)
+static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args)
 {
     *old_branch = NULL;
     if (main_node->type != CNODE)
     {
-        return main_node;
+        return OK;
     }
     cnode_t* cnode = &(main_node->node.cnode);
     if (lev > 0 && cnode->length == 1)
     {
         int index = highest_on_bit(cnode->bmp);
+        REPLACE_LAST_HP(thread_args, cnode->array[index]);
+        if (cnode->marked)
+        {
+            return RESTART;
+        }
         if (cnode->array[index]->type == SNODE)
         {
             tnode_t tnode           = entomb(&(cnode->array[index]->node.snode));
@@ -338,7 +343,7 @@ static main_node_t* to_contracted(main_node_t* main_node, int lev, branch_t** ol
         }
     }
     DEBUG("contracted main node %p old branch %p", main_node, *old_branch);
-    return main_node;
+    return OK;
 }
 
 /**
@@ -380,16 +385,18 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         }
     }
     branch_t* old_branch = NULL;
-    new_main_node = to_contracted(new_main_node, lev, &old_branch);
+    if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
+    {
+        // clean is a best effort, if we fail, we clean and return.
+        goto CLEANUP;
+    }
+    DEBUG("to contracted 3");
     if (!CAS(cas_address, old_main_node, new_main_node))
     {
         goto CLEANUP;
     }
     DEBUG("compressed main_node %p new main_node %p", old_main_node, new_main_node);
-    if (old_branch != NULL)
-    {
-        old_main_node->node.cnode.marked = 1;
-    }
+    old_main_node->node.cnode.marked = 1;
     for (i = 0; i < MAX_BRANCHES; i++)
     {
         if (delete_map & (1 << i))
@@ -464,29 +471,31 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
                 FAIL("Failed to update cnode");
             }
             branch_t* old_branch = NULL;
-            new_main_node = to_contracted(new_main_node, lev, &old_branch);
+            if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
+            {
+                free(new_main_node);
+                branch_free(new_branch);
+                clean_parent(parent, inode, key_hash, lev, thread_args);
+            }
+            DEBUG("to contracted 1");
             if (!CAS(&(parent->main), parent_main_node, new_main_node))
             {
                 free(new_main_node);
                 branch_free(new_branch);
                 clean_parent(parent, inode, key_hash, lev, thread_args);
             }
-            // CR: Can it happen? can old_branch be null?
+
+            parent_main_node->node.cnode.marked = 1;
+            inode->marked                       = 1;
+
+            FENCE;
+
+            add_to_free_list(thread_args, parent_main_node);
+            add_to_free_list(thread_args, branch);
+            add_to_free_list(thread_args, main_node);
             if (old_branch != NULL)
             {
                 add_to_free_list(thread_args, old_branch);
-            }
-            // TODO needed?
-            if (parent_main_node != NULL)
-            {
-                add_to_free_list(thread_args, parent_main_node);
-            }
-            // TODO needed?
-            if (branch != NULL)
-            {
-                add_to_free_list(thread_args, branch);
-                add_to_free_list(thread_args, inode);
-                add_to_free_list(thread_args, main_node);
             }
         }
         return;
@@ -630,7 +639,9 @@ static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int v
 {
     // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
     DEBUG("updating %d %d to cnode %p", key, value, main_node);
-    return cnode_insert(main_node, pos, 0, key, value, new_branch);
+    main_node_t* new_main_node = cnode_insert(main_node, pos, 0, key, value, new_branch);
+    new_main_node->node.cnode.length--;
+    return new_main_node;
 }
 
 /**
@@ -690,6 +701,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
                 FAIL("failed to create child branch");
             }
             cnode.array[pos1] = child;
+            cnode.length = 1;
         }
         else
         {
@@ -702,6 +714,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
             sibling2->node.snode = *new_snode;
             cnode.array[pos1] = sibling1;
             cnode.array[pos2] = sibling2;
+            cnode.length = 2;
         }
         cnode.bmp = (1 << pos1) | (1 << pos2);
         main_node->type = CNODE;
@@ -913,6 +926,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             branch_t* new_branch = NULL;
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch);
             CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to insert into cnode", thread_args, new_branch);
+            DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
             return OK;
         }
         // Check the branch.
@@ -934,6 +948,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode", thread_args, new_branch);
                 add_to_free_list(thread_args, branch);
+                DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
             else
@@ -947,6 +962,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode branch", thread_args, child);
                 add_to_free_list(thread_args, branch);
+                DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
         default:
@@ -1113,7 +1129,13 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             FAIL("Failed to remove %d from cnode", key);
                         }
                         branch_t* old_branch = NULL;
-                        new_main_node = to_contracted(new_main_node, lev, &old_branch);
+                        if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
+                        {
+                            res = RESTART;
+                            free(new_main_node);
+                            goto DONE;
+                        }
+                        DEBUG("to contracted 2");
                         if (!CAS(&(inode->main), main_node, new_main_node))
                         {
                             res = RESTART;
@@ -1124,6 +1146,8 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                         {
                             add_to_free_list(thread_args, old_branch);
                         }
+                        main_node->node.cnode.marked = 1;
+                        FENCE;
                         add_to_free_list(thread_args, branch);
                         add_to_free_list(thread_args, main_node);
                     }
