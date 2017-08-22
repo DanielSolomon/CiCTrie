@@ -329,15 +329,16 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
     if (lev > 0 && cnode->length == 1)
     {
         int index = highest_on_bit(cnode->bmp);
-        REPLACE_LAST_HP(thread_args, cnode->array[index]);
-        if (cnode->marked)
+        branch_t* branch = cnode->array[index];
+        REPLACE_LAST_HP(thread_args, branch);
+        if (cnode->marked || cnode->array[index] != branch)
         {
             return RESTART;
         }
-        if (cnode->array[index]->type == SNODE)
+        if (branch->type == SNODE)
         {
-            tnode_t tnode           = entomb(&(cnode->array[index]->node.snode));
-            *old_branch             = cnode->array[index];
+            tnode_t tnode           = entomb(&(branch->node.snode));
+            *old_branch             = branch;
             main_node->type         = TNODE;
             main_node->node.tnode   = tnode;
         }
@@ -357,9 +358,10 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     main_node_t* new_main_node  = NULL;
     int32_t      delete_map     = 0;
 
+    cnode_t* cnode              = &(old_main_node->node.cnode);
     MALLOC(new_main_node, main_node_t);
     new_main_node->type         = CNODE;
-    new_main_node->node.cnode   = old_main_node->node.cnode;
+    new_main_node->node.cnode   = *cnode;
 
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
@@ -368,7 +370,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         {
             branch_t* curr_branch = new_main_node->node.cnode.array[i];
             PLACE_TMP_HP(thread_args, curr_branch);
-            if (old_main_node->node.cnode.marked)
+            if (old_main_node->node.cnode.marked || cnode->array[i] != curr_branch)
             {
                 goto CLEANUP;
             }
@@ -396,12 +398,12 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         goto CLEANUP;
     }
     DEBUG("compressed main_node %p new main_node %p", old_main_node, new_main_node);
-    old_main_node->node.cnode.marked = 1;
+    cnode->marked = 1;
     for (i = 0; i < MAX_BRANCHES; i++)
     {
         if (delete_map & (1 << i))
         {
-            branch_t* branch = old_main_node->node.cnode.array[i];
+            branch_t* branch = cnode->array[i];
             branch->node.inode.marked = 1;
         }
     }
@@ -410,7 +412,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     {
         if (delete_map & (1 << i))
         {
-            branch_t* branch = old_main_node->node.cnode.array[i];
+            branch_t* branch = cnode->array[i];
             add_to_free_list(thread_args, branch);
             add_to_free_list(thread_args, branch->node.inode.main);
         }
@@ -926,7 +928,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             branch_t* new_branch = NULL;
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch);
             CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to insert into cnode", thread_args, new_branch);
-            DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
+            //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
             return OK;
         }
         // Check the branch.
@@ -948,7 +950,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode", thread_args, new_branch);
                 add_to_free_list(thread_args, branch);
-                DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
+                //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
             else
@@ -962,7 +964,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode branch", thread_args, child);
                 add_to_free_list(thread_args, branch);
-                DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
+                //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
         default:
@@ -1159,7 +1161,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             {
                 return res;
             }
-            if (inode->main->type == TNODE)
+            if (main_node->type == TNODE)
             {
                 clean_parent(parent, inode, hash(key), lev - W, thread_args);
             }
