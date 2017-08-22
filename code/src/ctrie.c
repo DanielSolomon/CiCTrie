@@ -361,16 +361,15 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     cnode_t* cnode              = &(old_main_node->node.cnode);
     MALLOC(new_main_node, main_node_t);
     new_main_node->type         = CNODE;
-    new_main_node->node.cnode   = *cnode;
 
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
     {
-        if (new_main_node->node.cnode.array[i] != NULL)
+        if (cnode->bmp & (1 << i))
         {
-            branch_t* curr_branch = new_main_node->node.cnode.array[i];
+            branch_t* curr_branch = cnode->array[i];
             PLACE_TMP_HP(thread_args, curr_branch);
-            if (cnode->marked || cnode->array[i] != curr_branch)
+            if (cnode->marked)
             {
                 DEBUG("Failed compress: m: %d !=: %d", cnode->marked, cnode->array[i] != curr_branch);
                 goto CLEANUP;
@@ -391,6 +390,8 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
                     FAIL("Failed to resurrect");
                 }
                 new_main_node->node.cnode.array[i] = new_branch;
+                new_main_node->node.cnode.bmp |= 1 << i;
+                new_main_node->node.cnode.length++;
                 delete_map |= 1 << i;
             }
         }
