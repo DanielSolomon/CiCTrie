@@ -370,13 +370,22 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         {
             branch_t* curr_branch = new_main_node->node.cnode.array[i];
             PLACE_TMP_HP(thread_args, curr_branch);
-            if (old_main_node->node.cnode.marked || cnode->array[i] != curr_branch)
+            if (cnode->marked || cnode->array[i] != curr_branch)
             {
+                DEBUG("Failed compress: m: %d !=: %d", cnode->marked, cnode->array[i] != curr_branch);
                 goto CLEANUP;
             }
             if (curr_branch->type == INODE && curr_branch->node.inode.main->type == TNODE)
             {
-                branch_t* new_branch = resurrect(&(curr_branch->node.inode));
+                inode_t*     tmp_inode      = &(curr_branch->node.inode);
+                main_node_t* tmp_main_node  = tmp_inode->main;
+                PLACE_TMP_HP(thread_args, tmp_main_node);
+                if (tmp_inode->marked || tmp_inode->main != tmp_main_node)
+                {
+                    DEBUG("SHEET");
+                    goto CLEANUP;
+                }
+                branch_t* new_branch = resurrect(tmp_inode);
                 if (new_branch == NULL)
                 {
                     FAIL("Failed to resurrect");
