@@ -213,6 +213,41 @@ static void main_node_free(main_node_t* main_node)
 }
 
 /**
+ * Frees `main_node` and all the decendants according to the given bmp.
+ * @param main_node: main node pointer to be freed.
+ * @param bmp: a bitmap of the decendants to be freed.
+ * @note not thread-safe. Assumes bmp is included in the main_node's bmp.
+ **/
+static void selective_main_node_free(main_node_t* main_node, int32_t bmp)
+{
+    DEBUG("selective_main_node_free %p", main_node);
+    int i = 0;
+    if (main_node != NULL) 
+    {
+        switch (main_node->type)
+        {
+        case CNODE:
+            for (i = 0; i < MAX_BRANCHES; i++)
+            {
+                if (bmp & (1 << i))
+                {
+                    branch_free(main_node->node.cnode.array[i]);
+                }
+            }
+            break;
+        case TNODE:
+            break;
+        case LNODE:
+            lnode_free(main_node->node.lnode.next);
+            break;
+        default:
+            break;
+        }
+        free(main_node);
+    }
+}
+
+/**
  * Frees `inode` and all its decendants
  * @param inode: inode pointer to be freed.
  * @note not thread-safe.
@@ -361,6 +396,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     cnode_t* cnode              = &(old_main_node->node.cnode);
     MALLOC(new_main_node, main_node_t);
     new_main_node->type         = CNODE;
+    new_main_node->node.cnode   = *cnode;
 
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
@@ -378,7 +414,9 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
             {
                 inode_t*     tmp_inode      = &(curr_branch->node.inode);
                 main_node_t* tmp_main_node  = tmp_inode->main;
+                DEBUG("Replacing branch %p - main_node %p", curr_branch, tmp_main_node);
                 PLACE_TMP_HP(thread_args, tmp_main_node);
+                // TODO accessing tmp_inode after replacing HP.
                 if (tmp_inode->marked || tmp_inode->main != tmp_main_node)
                 {
                     DEBUG("SHEET");
@@ -390,8 +428,6 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
                     FAIL("Failed to resurrect");
                 }
                 new_main_node->node.cnode.array[i] = new_branch;
-                new_main_node->node.cnode.bmp |= 1 << i;
-                new_main_node->node.cnode.length++;
                 delete_map |= 1 << i;
             }
         }
@@ -435,7 +471,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     return;
 
 CLEANUP:
-    main_node_free(new_main_node);
+    selective_main_node_free(new_main_node, delete_map);
 }
 
 /**

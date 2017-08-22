@@ -114,6 +114,7 @@ void insert_test(inserts_t* inserts, thread_args_t threads_args[])
     {
         for (j = 0; j < threads_args[i].free_list->length; j++)
         {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
             free(threads_args[i].free_list->free_list[j]);
         }
         threads_args[i].free_list->length = 0;
@@ -153,6 +154,7 @@ void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
     {
         for (j = 0; j < threads_args[i].free_list->length; j++)
         {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
             free(threads_args[i].free_list->free_list[j]);
         }
         threads_args[i].free_list->length = 0;
@@ -192,6 +194,7 @@ void remove_test(removes_t* removes, thread_args_t threads_args[])
     {
         for (j = 0; j < threads_args[i].free_list->length; j++)
         {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
             free(threads_args[i].free_list->free_list[j]);
         }
         threads_args[i].free_list->length = 0;
