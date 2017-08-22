@@ -51,7 +51,7 @@ static int          to_contracted(main_node_t* main_node, int lev, branch_t** ol
  *******************/
 
 static tnode_t   entomb   (snode_t* snode);
-static branch_t* resurrect(inode_t* inode);
+static branch_t* resurrect(main_node_t* inode);
 
 /***********************
  * Internals functions *
@@ -293,10 +293,10 @@ static tnode_t entomb(snode_t* snode)
  * @param inode: inode pointer to revive its content if needed.
  * @return On success branch_t pointer is returned contains the revived snode, otherwise NULL is returned.
  **/
-static branch_t* resurrect(inode_t* inode)
+static branch_t* resurrect(main_node_t* main_node)
 {
-    DEBUG("resurrecting inode %p", inode);
-    if (inode->main->type != TNODE)
+    DEBUG("resurrecting main_node %p", main_node);
+    if (main_node->type != TNODE)
     {
         return NULL;
     }
@@ -304,7 +304,7 @@ static branch_t* resurrect(inode_t* inode)
     branch_t* new_branch = NULL;
     MALLOC(new_branch, branch_t);
     new_branch->type        = SNODE;
-    new_branch->node.snode  = inode->main->node.tnode.snode;
+    new_branch->node.snode  = main_node->node.tnode.snode;
 
     return new_branch;
 
@@ -384,7 +384,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
                     DEBUG("SHEET");
                     goto CLEANUP;
                 }
-                branch_t* new_branch = resurrect(tmp_inode);
+                branch_t* new_branch = resurrect(tmp_main_node);
                 if (new_branch == NULL)
                 {
                     FAIL("Failed to resurrect");
