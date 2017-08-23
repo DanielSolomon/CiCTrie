@@ -280,7 +280,8 @@ static void ctrie_free(ctrie_t* ctrie)
 /**
  * Searches for `key` in the lnode-list beginning with `lnode`.
  * @param lnode: lnode-list to search in.
- * @param key: to search for.
+ * @param key: the key to search for.
+ * @param thread_args: the thread arguments.
  * @return if key is found returns the related value, returns RESTART if some race occurred, otherwise returns NOTFOUND.
  **/
 static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
@@ -324,8 +325,8 @@ static tnode_t entomb(snode_t* snode)
 }
 
 /**
- * Revives inode content, if it points to a tnode.
- * @param inode: inode pointer to revive its content if needed.
+ * Revives main_node's, if it is a tnode.
+ * @param main_node: the main node to revive, if needed.
  * @return On success branch_t pointer is returned contains the revived snode, otherwise NULL is returned.
  **/
 static branch_t* resurrect(main_node_t* main_node)
@@ -351,7 +352,9 @@ CLEANUP:
  * Contracts main node if points to a 1-length CNode.
  * @param main_node: main node pointer to be contracted.
  * @param lev: hash level.
- * @return if needed returns new contracted main node, otherwise old main node is returned.
+ * @param old_branch: an out parameter, will contain the replaced branch if the node was contracted. Will be set to NULL if no contraction happened.
+ * @param thread_args: the thread arguments.
+ * @return RESTART if a race occured, otherwise returns OK.
  **/
 static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args)
 {
@@ -383,10 +386,11 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
 }
 
 /**
- * Compress cnode and wraps it with a main node.
- * @param old_cnode: old cnode to be compressed.
+ * Compresses old_main_node and tries to replace it.
+ * @param cas_address: the address to be CAS'ed.
+ * @param old_main_node: the main node to be compressed.
  * @param lev: hash level.
- * @return On success compresed cnode wrapped by a new main_node is returned, otherwise NULL is returned.
+ * @param thread_args: the thread arguments.
  **/
 static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args)
 {
@@ -478,6 +482,7 @@ CLEANUP:
  * Tries to clean inode if it points to a compressable CNode.
  * @param inode: inode to clean.
  * @param lev: hash level.
+ * @param thread_args: the thread arguments.
  * @note Assumes that inode and inode->main are protected with HP.
  **/
 static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
@@ -496,6 +501,7 @@ static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
  * @param inode: child of parent.
  * @param key_hash: a hash of the key to be cleaned.
  * @param lev: hash level.
+ * @param thread_args: the thread arguments.
  * @todo this function may fail...
  */
 static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args)
@@ -558,6 +564,7 @@ CLEANUP:
  * @param key: key to be searched for.
  * @param lev: hash level.
  * @param parent: parent inode pointer.
+ * @param thread_args: the thread arguments.
  * @return On success returns the value related to the found key if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
  **/
 static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
@@ -626,8 +633,9 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
 
 /**
  * Searches for `key` in the ctrie.
- * @param ctrie
- * @param key
+ * @param ctrie: the ctrie.
+ * @param key: the key to be searched for.
+ * @param thread_args: the thread arguments.
  * @return If `key` is found, its value is returned, otherwise NOTFOUND is returned.
  **/
 static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_args)
@@ -645,13 +653,14 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
 }
 
 /**
- * Creates a copy of `cnode`, with a branch to an SNode of (`key`, `value`) in position `pos`.
- * @param main_node
- * @param pos
- * @param flag
- * @param key
- * @param value
- * @return On success an updated CNode is returned wrapped by main node, otherwise NULL is returned.
+ * Creates a copy of the cnode, with a branch to an SNode of (`key`, `value`) in position `pos`.
+ * @param main_node: the main node which contains the cnode.
+ * @param pos: the position into which the new snode will be inserted.
+ * @param flag: the bitmap flag to be turend on.
+ * @param key: the new key.
+ * @param value: the new value.
+ * @param new_branch: an out parameter that is set to the newly created branch.
+ * @return On success an updated cnode is returned wrapped by a main node, otherwise NULL is returned.
  **/
 static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch)
 {
@@ -680,12 +689,13 @@ CLEANUP:
 }
 
 /**
- * Creates a copy of `cnode`, but updated the branch in position `pos` to an SNode of (`key`, `value`).
- * @param main_node
- * @param pos
- * @param key
- * @param value
- * @return On success updated CNode wrapped by main node is returned, otherwise NULL is returned.
+ * Creates a copy of the cnode, and updates the branch in position `pos` to an SNode of (`key`, `value`).
+ * @param main_node: the main node which contains the cnode.
+ * @param pos: the position in the array to be updated.
+ * @param key: the new key.
+ * @param value: the new value.
+ * @param new_branch: an out parameter that is set to the newly created branch.
+ * @return On success the updated cnode wrapped by a main node is returned, otherwise NULL is returned.
  **/
 static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch)
 {
@@ -697,11 +707,11 @@ static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int v
 }
 
 /**
- * Creates new main node which will contain CNode pointed by `main_node` updated by `branch` in position `pos`.
- * @param main_node: main node points to a CNode.
- * @param pos: position where to insert `branch`.
- * @param branch: `branch` to be inserted.
- * @return On success updated CNode wrapped by a main node is returned.
+ * Creates a copy of the cnode, and updates the branch in position `pos` to be `branch`.
+ * @param main_node: the main node which contains the cnode.
+ * @param pos: the position in the array to be updated.
+ * @param branch: the new branch.
+ * @return On success the updated cnode wrapped by a main node is returned, otherwise NULL is returned.
  **/
 static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
 {
@@ -721,11 +731,11 @@ CLEANUP:
 }
 
 /**
- * Creates branch points to cnode that contains both old snode and new snode, if needed lnode is created.
- * @param lev: hash level.
- * @param old_snode
- * @param new_snode
- * @return On sucess branch_t* is returned, otherwise NULL is reutrned.
+ * Creates a branch chain which points to cnode that contains both old snode and new snode. If needed a lnode is created.
+ * @param lev: the hash level.
+ * @param old_snode: the old snode.
+ * @param new_snode: the new snode.
+ * @return On sucess the created branch is returned, otherwise NULL is reutrned.
  **/
 static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
 {
@@ -794,14 +804,16 @@ CLEANUP:
 }
 
 /**
- * Attempts to insert `snode` into lnode.
- * @param main_node: main node pointer points to a LNode.
- * @param snode: snode to insert into lnode pointed by main_node.
- * @return On success new lnode is returned containing snode wrapped by main node, otherwise NULL is returned.
+ * Attempts to insert `snode` into the lnode list.
+ * @param main_node: the main node which contains the lnode.
+ * @param snode: the new snode to be inserted.
+ * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
+ * @param thread_args: the thread arguments.
+ * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  **/
 static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args)
 {
-    lnode_t*     next          = NULL;
+    lnode_t* next   = NULL;
     int res = lnode_copy(main_node, new_main_node, thread_args);
     if (res != OK)
     {
@@ -825,8 +837,10 @@ CLEANUP:
 
 /**
  * Copies lnode.
- * @param main_node: main node pointer points to a LNode.
- * @return On success returns a full copy of lnode wrapped by main node, otherwise NULL is returned.
+ * @param main_node: the main node which contains the lnode.
+ * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
+ * @param thread_args: the thread arguments.
+ * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  */
 static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args)
 {
@@ -874,10 +888,11 @@ CLEANUP:
 /**
  * Attempts to remove `key` from `main_node` points to LNode.
  * @param main_node
- * @param key
- * @param new_main_node: main_node_t* pointer that will be filled with the new main node if successful.
- * @param value: int pointer that will be filled with `key`'s value if it will be removed.
- * @return Returns OK if successful, FAILED if an error occurred or NOTFOUND if the key wans't found.
+ * @param key: the key to be removed.
+ * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
+ * @param value: an out parameter that is set to `key`'s value if it is removed.
+ * @param thread_args: the thread arguments.
+ * @return Returns OK if successful, FAILED if an error occurred or NOTFOUND if the key wasn't found.
  **/
 static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args)
 {
@@ -938,11 +953,12 @@ CLEANUP:
 
 /**
  * Attempts to insert (`key`, `value`) to the subtree of `inode`.
- * @param inode
- * @param key
- * @param value
- * @param lev
- * @param parent
+ * @param inode: the current inode.
+ * @param key: the key to be inserted.
+ * @param value: the value to be inserted.
+ * @param lev: the hash level.
+ * @param parent: the parent inode.
+ * @param thread_args: the thread arguments.
  * @return On failure FAILED is returned, otherwise OK is returned if (`key`, `value`) was inserted, or RESTART if the insert should be called again.
  */
 static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args)
@@ -1072,9 +1088,10 @@ CLEANUP:
 
 /**
  * Attempts to insert (`key`, `value`) to the ctrie.
- * @param ctrie
- * @param key
- * @param value
+ * @param ctrie: the ctrie.
+ * @param key: the new key to be inserted.
+ * @param value: the new value to be inserted.
+ * @param thread_args: the thread arguments.
  * @return On success, OK is returned, otherwise FAILED is returned.
  **/
 static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* thread_args)
@@ -1092,7 +1109,7 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* threa
 }
 
 /**
- *
+ * Removes the branch in position `pos` from a cnode.
  * @param main_node: main node which points to a cnode.
  * @param pos: position to removed.
  * @param flag: bmp flag to set off.
@@ -1122,6 +1139,7 @@ CLEANUP:
  * @param key: key to be removed.
  * @param lev: hash level.
  * @param parent: parent inode of `inode`.
+ * @param thread_args: the thread arguments.
  * @return On failure, FAILED is returned, otherwise if `key` was removed its value is returned, if `key` couldn't be found NOTFOUND is returned, RESTART my be the result if `internal_remove` shoud be called again.
  **/
 static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
@@ -1273,6 +1291,7 @@ CLEANUP:
  * Removes `key` from `ctrie`.
  * @param ctrie: ctrie pointer from which key will be removed.
  * @param key: key to be removed.
+ * @param thread_args: the thread arguments.
  * @return On failure FAILED is returned, otherwise, if `key` was found, its value is returned and if not NOTFOUND is returned.
  **/
 static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
