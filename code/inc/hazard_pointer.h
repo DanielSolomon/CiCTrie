@@ -5,7 +5,7 @@
 #define NUM_OF_HAZARD_POINTERS              (MAX_HAZARD_POINTERS + MAX_LIST_HAZARD_POINTERS)
 #define TOTAL_HAZARD_POINTERS(thread_args)  (thread_args->num_of_threads * NUM_OF_HAZARD_POINTERS)
 // TODO + CR: Change 3 to num of threads and MAX_HAZARD_POINTERS shouldn't be NUM_OF_HAZARD_POINTERS?
-#define FREE_LIST_SIZE                      (3 * MAX_HAZARD_POINTERS)
+#define FREE_LIST_SIZE                      (NUM_OF_THREADS * MAX_HAZARD_POINTERS)
 #define FENCE                               do {__sync_synchronize();} while(0)
 #define PLACE_HP(thread_args, arg)          place_hazard_pointer((thread_args)->hp_lists[(thread_args)->index], arg)
 #define PLACE_LIST_HP(thread_args, arg)     place_list_hazard_pointer((thread_args)->hp_lists[(thread_args)->index], arg)
