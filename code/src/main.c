@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "hazard_pointer.h"
 #include "nodes.h"
@@ -33,6 +34,19 @@ typedef struct {
     int             size;
 } remove_thread_arg_t;
 
+int64_t get_time()
+{
+    struct timespec tp;
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) == -1)
+    {
+        FAIL("Failed to get time");
+    }
+    return tp.tv_sec * 1000000000 + tp.tv_nsec;
+
+CLEANUP:
+    return -1;
+}
+
 void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
 {
     int i;
@@ -57,8 +71,8 @@ void lookup_test_thread(lookup_thread_arg_t* lookup_thread_arg)
     for (i = 0; i < size; i++)
     {
         lookup_t lookup = lookup_thread_arg->lookups->lookups[offset + i];
-        ctrie->lookup(ctrie, lookup.key, lookup_thread_arg->thread_arg);
-        PRINT("lookuped %d key=%d", i, lookup.key);
+        int ret = ctrie->lookup(ctrie, lookup.key, lookup_thread_arg->thread_arg);
+        PRINT("lookuped %d key=%d ret=%d", i, lookup.key, ret);
     }
     PRINT("out of for");
     release_hazard_pointers(lookup_thread_arg->thread_arg->hp_lists[lookup_thread_arg->thread_arg->index]);
@@ -81,7 +95,7 @@ void remove_test_thread(remove_thread_arg_t* remove_thread_arg)
     PRINT("after release");
 }
 
-void insert_test(inserts_t* inserts, thread_args_t threads_args[])
+int64_t insert_test(inserts_t* inserts, thread_args_t threads_args[])
 {
     int i;
     insert_thread_arg_t insert_threads_args[NUM_OF_THREADS] = {0};
@@ -99,6 +113,11 @@ void insert_test(inserts_t* inserts, thread_args_t threads_args[])
         };
     }
 
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
     pthread_t tids[NUM_OF_THREADS];
     for (i = 0; i < NUM_OF_THREADS; i++)
     {
@@ -108,6 +127,7 @@ void insert_test(inserts_t* inserts, thread_args_t threads_args[])
     {
         pthread_join(tids[i], NULL);
     }
+    int64_t end_time = get_time();
 
     int j = 0;
     for (i = 0; i < NUM_OF_THREADS; i++)
@@ -119,9 +139,15 @@ void insert_test(inserts_t* inserts, thread_args_t threads_args[])
         }
         threads_args[i].free_list->length = 0;
     }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
 }
 
-void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
+int64_t lookup_test(lookups_t* lookups, thread_args_t threads_args[])
 {
     int i;
     lookup_thread_arg_t lookup_threads_args[NUM_OF_THREADS] = {0};
@@ -139,6 +165,11 @@ void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
         };
     }
 
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
     pthread_t tids[NUM_OF_THREADS];
     for (i = 0; i < NUM_OF_THREADS; i++)
     {
@@ -148,6 +179,7 @@ void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
     {
         pthread_join(tids[i], NULL);
     }
+    int64_t end_time = get_time();
 
     int j = 0;
     for (i = 0; i < NUM_OF_THREADS; i++)
@@ -159,9 +191,15 @@ void lookup_test(lookups_t* lookups, thread_args_t threads_args[])
         }
         threads_args[i].free_list->length = 0;
     }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
 }
 
-void remove_test(removes_t* removes, thread_args_t threads_args[])
+int64_t remove_test(removes_t* removes, thread_args_t threads_args[])
 {
     int i;
     remove_thread_arg_t remove_threads_args[NUM_OF_THREADS] = {0};
@@ -179,6 +217,11 @@ void remove_test(removes_t* removes, thread_args_t threads_args[])
         };
     }
 
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
     pthread_t tids[NUM_OF_THREADS];
     for (i = 0; i < NUM_OF_THREADS; i++)
     {
@@ -188,6 +231,7 @@ void remove_test(removes_t* removes, thread_args_t threads_args[])
     {
         pthread_join(tids[i], NULL);
     }
+    int64_t end_time = get_time();
 
     int j = 0;
     for (i = 0; i < NUM_OF_THREADS; i++)
@@ -199,6 +243,12 @@ void remove_test(removes_t* removes, thread_args_t threads_args[])
         }
         threads_args[i].free_list->length = 0;
     }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
 }
 
 char* read_file(const char* path)
@@ -252,7 +302,8 @@ void handle_insert(const char* path, thread_args_t threads_args[])
         FAIL("Failed to read file");
     }
     inserts_t* inserts = (inserts_t*) data;
-    insert_test(inserts, threads_args);
+    int64_t time = insert_test(inserts, threads_args);
+    printf("insert took %ld nsecs\n", time);
 
 CLEANUP:
     if (data != NULL)
@@ -270,7 +321,8 @@ void handle_lookup(const char* path, thread_args_t threads_args[])
         FAIL("Failed to read file");
     }
     lookups_t* lookups = (lookups_t*) data;
-    lookup_test(lookups, threads_args);
+    int64_t time = lookup_test(lookups, threads_args);
+    printf("lookup took %ld nsecs\n", time);
 
 CLEANUP:
     if (data != NULL)
@@ -288,7 +340,8 @@ void handle_remove(const char* path, thread_args_t threads_args[])
         FAIL("Failed to read file");
     }
     removes_t* removes = (removes_t*) data;
-    remove_test(removes, threads_args);
+    int64_t time = remove_test(removes, threads_args);
+    printf("remove took %ld nsecs\n", time);
 
 CLEANUP:
     if (data != NULL)

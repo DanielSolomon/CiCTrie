@@ -580,7 +580,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
     branch_t* branch = NULL;
 
     // Check the inode's child.
-    switch(inode->main->type)
+    switch(main_node->type)
     {
     case CNODE:
         // CNode - compute the branch with the relevant hash bits and search in it.
@@ -635,6 +635,10 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
     int res = RESTART;
     do {
         res = internal_lookup(ctrie->inode, key, 0, NULL, thread_args);
+        if (res == RESTART)
+        {
+            DEBUG("restarting lookup!");
+        }
     }
     while (res == RESTART);
     return  res;
@@ -1078,6 +1082,10 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* threa
     int res = RESTART;
     do {
         res = internal_insert(ctrie->inode, key, value, 0, NULL, thread_args);
+        if (res == RESTART)
+        {
+            DEBUG("restarting insert!");
+        }
     }
     while (res == RESTART);
     return res;
@@ -1272,6 +1280,10 @@ static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
     int res = RESTART;
     do {
         res = internal_remove(ctrie->inode, key, 0, NULL, thread_args);
+        if (res == RESTART)
+        {
+            DEBUG("restarting remove!");
+        }
     } while (res == RESTART);
     return res;
 }

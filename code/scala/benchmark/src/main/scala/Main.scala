@@ -13,7 +13,7 @@ class MyInt (val x: Int){
 }
 
 object Constants {
-    val NUM_OF_THREADS = 4
+    val NUM_OF_THREADS = 2
 }
 
 trait Op[Key, Value] {
@@ -83,9 +83,11 @@ object Main {
             }
             threads +=  new Thread(new WorkerThread[MyInt, Int](map, arr))
         }
+        val start_time = System.nanoTime()
         threads.foreach(t => t.start())
         threads.foreach(t => t.join())
-        println("Done insert");
+        val end_time = System.nanoTime()
+        println("Done insert in " + (end_time - start_time) + " nsec");
     }
 
     def handleLookup (map: TrieMap[MyInt, Int], path: String) = {
@@ -109,9 +111,11 @@ object Main {
             }
             threads +=  new Thread(new WorkerThread[MyInt, Int](map, arr))
         }
+        val start_time = System.nanoTime()
         threads.foreach(t => t.start())
         threads.foreach(t => t.join())
-        println("Done lookup");
+        val end_time = System.nanoTime()
+        println("Done lookup in " + (end_time - start_time) + " nsec");
     }
 
     def handleRemove (map: TrieMap[MyInt, Int], path: String) = {
@@ -135,9 +139,11 @@ object Main {
             }
             threads +=  new Thread(new WorkerThread[MyInt, Int](map, arr))
         }
+        val start_time = System.nanoTime()
         threads.foreach(t => t.start())
         threads.foreach(t => t.join())
-        println("Done remove");
+        val end_time = System.nanoTime()
+        println("Done remove in " + (end_time - start_time) + " nsec");
     }
 
     def main(args: Array[String]) = {
