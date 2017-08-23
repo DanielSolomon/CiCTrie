@@ -8,12 +8,14 @@ def generate_inserts(range_, num):
     return data, integers
 
 def generate_lookups(set_, num):
-    integers    = [random.choice(set_) for _ in xrange(num)]
+    #integers    = [random.choice(set_) for _ in xrange(num)]
+    integers    = [set_[i*2] for i in xrange(num)]
     data        = struct.pack('<I' + 'I' * num, num, *integers)
     return data, integers
 
 def generate_removes(set_, num):
-    integers    = [random.choice(set_) for _ in xrange(num)]
+    #integers    = [random.choice(set_) for _ in xrange(num)]
+    integers    = [set_[i*2] for i in xrange(num)]
     data        = struct.pack('<I' + 'I' * num, num, *integers)
     return data, integers
 
