@@ -2,8 +2,8 @@
 
 typedef enum 
 {
-    LOOKUP,
     INSERT,
+    LOOKUP,
     REMOVE,
 } action_type_t;
 

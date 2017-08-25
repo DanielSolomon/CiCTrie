@@ -34,6 +34,13 @@ typedef struct {
     int             size;
 } remove_thread_arg_t;
 
+typedef struct {
+    thread_args_t*  thread_arg;
+    actions_t*      actions;
+    int             offset;
+    int             size;
+} action_thread_arg_t;
+
 int64_t get_time()
 {
     struct timespec tp;
@@ -96,6 +103,34 @@ void remove_test_thread(remove_thread_arg_t* remove_thread_arg)
     }
     PRINT("out of for");
     release_hazard_pointers(remove_thread_arg->thread_arg->hp_lists[remove_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+void action_test_thread(action_thread_arg_t* action_thread_arg)
+{
+    int i;
+    int size    = action_thread_arg->size;
+    int offset  = action_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        action_t* curr_action = &(action_thread_arg->actions->actions[offset + i]);
+        switch (curr_action->type)
+        {
+        case INSERT:
+            ctrie->insert(ctrie, curr_action->action.insert.key, curr_action->action.insert.value, action_thread_arg->thread_arg);
+            break;
+        case LOOKUP:
+            ctrie->lookup(ctrie, curr_action->action.insert.key, action_thread_arg->thread_arg);
+            break;
+        case REMOVE:
+            ctrie->remove(ctrie, curr_action->action.insert.key, action_thread_arg->thread_arg);
+            break;
+        default:
+            PRINT("unknown action %d", curr_action->type);
+        }
+    }
+    PRINT("out of for");
+    release_hazard_pointers(action_thread_arg->thread_arg->hp_lists[action_thread_arg->thread_arg->index]);
     PRINT("after release");
 }
 
@@ -255,6 +290,57 @@ int64_t remove_test(removes_t* removes, thread_args_t threads_args[])
     return end_time - start_time;
 }
 
+int64_t action_test(actions_t* actions, thread_args_t threads_args[])
+{
+    int i;
+    action_thread_arg_t action_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = actions->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        action_threads_args[i] = (action_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .actions    = actions,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))action_test_thread, &(action_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+    int64_t end_time = get_time();
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
+}
 char* read_file(const char* path)
 {
     FILE* fp    = NULL;
@@ -354,6 +440,25 @@ CLEANUP:
     }
 }
 
+void handle_action(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    actions_t* actions = (actions_t*) data;
+    int64_t time = action_test(actions, threads_args);
+    printf("action took %ld nsecs\n", time);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
 int main(int argc, char* argv[])
 {
     int i = 0;
@@ -412,6 +517,12 @@ int main(int argc, char* argv[])
             PRINT("Handle remove..");
             handle_remove(argv[i + 1], threads_args);
             PRINT("Handled remove");
+        }
+        else if (strcmp(argv[i], "action") == 0)
+        {
+            PRINT("Handle action..");
+            handle_remove(argv[i + 1], threads_args);
+            PRINT("Handled action");
         }
         else
         {
