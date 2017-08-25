@@ -73,6 +73,10 @@ void lookup_test_thread(lookup_thread_arg_t* lookup_thread_arg)
         lookup_t lookup = lookup_thread_arg->lookups->lookups[offset + i];
         int ret = ctrie->lookup(ctrie, lookup.key, lookup_thread_arg->thread_arg);
         PRINT("lookuped %d key=%d ret=%d", i, lookup.key, ret);
+        if (ret == NOTFOUND)
+        {
+            printf("key: %d not found\n", lookup.key);
+        }
     }
     PRINT("out of for");
     release_hazard_pointers(lookup_thread_arg->thread_arg->hp_lists[lookup_thread_arg->thread_arg->index]);
