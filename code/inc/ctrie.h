@@ -4,6 +4,11 @@
 
 #include "hazard_pointer.h"
 
+#define OK          (0)
+#define FAILED      (-1)
+#define NOTFOUND    (-2)
+#define RESTART     (-3)
+
 typedef struct ctrie_t
 {
     inode_t* inode;

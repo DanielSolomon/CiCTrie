@@ -6,15 +6,6 @@
 #include "ctrie.h"
 #include "hazard_pointer.h"
 
-/*************
- * CONSTANTS *
- *************/
-
-#define OK          (0)
-#define FAILED      (-1)
-#define NOTFOUND    (-2)
-#define RESTART     (-3)
-
 /*************************
  * Functions Declaration *
  *************************/
@@ -310,8 +301,8 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
  **/
 static int hash(int key)
 {
-    //return key / 10;
-    return key;
+    return key / 10;
+    //return key;
 }
 
 /**
