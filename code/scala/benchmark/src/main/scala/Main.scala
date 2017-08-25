@@ -13,7 +13,10 @@ class MyInt (val x: Int){
 }
 
 object Constants {
-    val NUM_OF_THREADS = 44
+    val NUM_OF_THREADS =  4
+    val INSERT_TYPE = 0
+    val LOOKUP_TYPE = 1
+    val REMOVE_TYPE = 2
 }
 
 trait Op[Key, Value] {
@@ -27,7 +30,7 @@ class InsertOp[Key, Value] (key:Key, value:Value) extends Op[Key, Value]{
     }
 }
 
-class LookupOp[Key, Value] (key:Key) extends Op[Key, Value] {
+class LookupOp[Key, Value] (key:Key, pad:Value = 0) extends Op[Key, Value] {
     override def execute(m: TrieMap[Key, Value]) {
         try {
             val value = m(key)
@@ -39,7 +42,7 @@ class LookupOp[Key, Value] (key:Key) extends Op[Key, Value] {
     }
 }
 
-class RemoveOp[Key, Value] (key:Key) extends Op[Key, Value] {
+class RemoveOp[Key, Value] (key:Key, pad:Value = 0) extends Op[Key, Value] {
     override def execute(m: TrieMap[Key, Value]) {
         try {
             m.remove(key)
@@ -146,6 +149,37 @@ object Main {
         println("Done remove in " + (end_time - start_time) + " nsec");
     }
 
+    def handleGeneric (map: TrieMap[MyInt, Int], path: String) = {
+        // Read the data and wrap it with a little endian buffer
+        println("Reading data from" + path)
+        val data = Files.readAllBytes(Paths.get(path))
+        val wrapper = ByteBuffer.wrap(data)
+        wrapper.order(ByteOrder.LITTLE_ENDIAN);
+
+        val size = wrapper.getInt
+        val chunk = size / Constants.NUM_OF_THREADS
+        val index = 0
+
+        val threads = new ListBuffer[Thread]()
+
+        for (i <- 1 to Constants.NUM_OF_THREADS) {
+            val arr = new Array[Op[MyInt, Int]](chunk)
+            for (j <- 0 to chunk - 1) {
+                arr(j) = wrapper.getInt match {
+                    case Constants.INSERT_TYPE => new InsertOp[MyInt, Int](new MyInt(wrapper.getInt), wrapper.getInt)
+                    case Constants.LOOKUP_TYPE => new LookupOp[MyInt, Int](new MyInt(wrapper.getInt), wrapper.getInt)
+                    case Constants.REMOVE_TYPE => new RemoveOp[MyInt, Int](new MyInt(wrapper.getInt), wrapper.getInt)
+                }
+            }
+            threads +=  new Thread(new WorkerThread[MyInt, Int](map, arr))
+        }
+        val start_time = System.nanoTime()
+        threads.foreach(t => t.start())
+        threads.foreach(t => t.join())
+        val end_time = System.nanoTime()
+        println("Done generic action in " + (end_time - start_time) + " nsec");
+    }
+
     def main(args: Array[String]) = {
         if (args.length == 0) {
             println("Please enter a sample path")
@@ -162,6 +196,9 @@ object Main {
                 }
                 if (args(i) == "remove") {
                     handleRemove(map, args(i+1))
+                }
+                if (args(i) == "action") {
+                    handleGeneric(map, args(i+1))
                 }
             }
         }
