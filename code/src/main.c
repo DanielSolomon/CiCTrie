@@ -394,7 +394,7 @@ void handle_insert(const char* path, thread_args_t threads_args[])
     }
     inserts_t* inserts = (inserts_t*) data;
     int64_t time = insert_test(inserts, threads_args);
-    printf("insert took %ld nsecs\n", time);
+    PERS_PRINT("Insert took %ld nsecs", time);
 
 CLEANUP:
     if (data != NULL)
@@ -413,7 +413,7 @@ void handle_lookup(const char* path, thread_args_t threads_args[])
     }
     lookups_t* lookups = (lookups_t*) data;
     int64_t time = lookup_test(lookups, threads_args);
-    printf("lookup took %ld nsecs\n", time);
+    PERS_PRINT("Lookup took %ld nsecs", time);
 
 CLEANUP:
     if (data != NULL)
@@ -432,7 +432,7 @@ void handle_remove(const char* path, thread_args_t threads_args[])
     }
     removes_t* removes = (removes_t*) data;
     int64_t time = remove_test(removes, threads_args);
-    printf("remove took %ld nsecs\n", time);
+    PERS_PRINT("Remove took %ld nsecs", time);
 
 CLEANUP:
     if (data != NULL)
@@ -451,7 +451,7 @@ void handle_action(const char* path, thread_args_t threads_args[])
     }
     actions_t* actions = (actions_t*) data;
     int64_t time = action_test(actions, threads_args);
-    printf("action took %ld nsecs\n", time);
+    PERS_PRINT("Action took %ld nsecs", time);
 
 CLEANUP:
     if (data != NULL)
@@ -470,8 +470,8 @@ int main(int argc, char* argv[])
         return -1;
     }
 
-    PRINT("Start");
-    PRINT("Setting up %d threads", NUM_OF_THREADS);
+    PERS_PRINT("Start");
+    PERS_PRINT("Setting up %d threads", NUM_OF_THREADS);
 
     hp_list_t*  hp_array[NUM_OF_THREADS]    = {0};
     hp_list_t   hp_lists[NUM_OF_THREADS]    = {0};
@@ -538,5 +538,6 @@ CLEANUP:
         ctrie->free(ctrie);
     }
 
+    PERS_PRINT("Done");
     return 0;
 }

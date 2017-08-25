@@ -33,6 +33,13 @@
 #define DEBUG(...)
 #endif
 
+#define PERS_PRINT(fmt, ...) do {                                                                               \
+    char __BUFFER[MESSAGE_SIZE + 1] = {0};                                                                      \
+    snprintf(__BUFFER, MESSAGE_SIZE, "[%d] [%s: %d] %s.\n", (int) syscall(SYS_gettid), __FILE__, __LINE__, fmt);\
+    printf(__BUFFER, ##__VA_ARGS__);                                                                            \
+    fflush(stdout);                                                                                             \
+} while (0)   
+
 #define MALLOC(var, type) do {                              \
     var = malloc(sizeof(type));                             \
     if (var == NULL)                                        \
