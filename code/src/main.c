@@ -114,6 +114,7 @@ void action_test_thread(action_thread_arg_t* action_thread_arg)
     for (i = 0; i < size; i++)
     {
         action_t* curr_action = &(action_thread_arg->actions->actions[offset + i]);
+        DEBUG("Current Type is: %d", curr_action->type);
         switch (curr_action->type)
         {
         case INSERT:
@@ -521,7 +522,7 @@ int main(int argc, char* argv[])
         else if (strcmp(argv[i], "action") == 0)
         {
             PRINT("Handle action..");
-            handle_remove(argv[i + 1], threads_args);
+            handle_action(argv[i + 1], threads_args);
             PRINT("Handled action");
         }
         else
