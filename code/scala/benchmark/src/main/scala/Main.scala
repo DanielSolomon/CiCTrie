@@ -13,7 +13,6 @@ class MyInt (val x: Int){
 }
 
 object Constants {
-    val NUM_OF_THREADS =  4
     val INSERT_TYPE = 0
     val LOOKUP_TYPE = 1
     val REMOVE_TYPE = 2
@@ -64,7 +63,7 @@ class WorkerThread[Key, Value](m: TrieMap[Key, Value], ops: Array[Op[Key, Value]
 
 
 object Main {
-    def handleInsert (map: TrieMap[MyInt, Int], path: String) = {
+    def handleInsert (numOfThreads: Int, map: TrieMap[MyInt, Int], path: String) = {
         // Read the data and wrap it with a little endian buffer
         println("Reading data from" + path)
         val data = Files.readAllBytes(Paths.get(path))
@@ -72,12 +71,12 @@ object Main {
         wrapper.order(ByteOrder.LITTLE_ENDIAN);
 
         val size = wrapper.getInt
-        val chunk = size / Constants.NUM_OF_THREADS
+        val chunk = size / numOfThreads
         val index = 0
 
         val threads = new ListBuffer[Thread]()
 
-        for (i <- 1 to Constants.NUM_OF_THREADS) {
+        for (i <- 1 to numOfThreads) {
             val arr = new Array[Op[MyInt, Int]](chunk)
             for (j <- 0 to chunk - 1) {
                 val key = new MyInt(wrapper.getInt)
@@ -93,7 +92,7 @@ object Main {
         println("Done insert in " + (end_time - start_time) + " nsec");
     }
 
-    def handleLookup (map: TrieMap[MyInt, Int], path: String) = {
+    def handleLookup (numOfThreads: Int, map: TrieMap[MyInt, Int], path: String) = {
         // Read the data and wrap it with a little endian buffer
         println("Reading data from" + path)
         val data = Files.readAllBytes(Paths.get(path))
@@ -101,12 +100,12 @@ object Main {
         wrapper.order(ByteOrder.LITTLE_ENDIAN);
 
         val size = wrapper.getInt
-        val chunk = size / Constants.NUM_OF_THREADS
+        val chunk = size / numOfThreads
         val index = 0
 
         val threads = new ListBuffer[Thread]()
 
-        for (i <- 1 to Constants.NUM_OF_THREADS) {
+        for (i <- 1 to numOfThreads) {
             val arr = new Array[Op[MyInt, Int]](chunk)
             for (j <- 0 to chunk - 1) {
                 val key = new MyInt(wrapper.getInt)
@@ -121,7 +120,7 @@ object Main {
         println("Done lookup in " + (end_time - start_time) + " nsec");
     }
 
-    def handleRemove (map: TrieMap[MyInt, Int], path: String) = {
+    def handleRemove (numOfThreads: Int, map: TrieMap[MyInt, Int], path: String) = {
         // Read the data and wrap it with a little endian buffer
         println("Reading data from" + path)
         val data = Files.readAllBytes(Paths.get(path))
@@ -129,12 +128,12 @@ object Main {
         wrapper.order(ByteOrder.LITTLE_ENDIAN);
 
         val size = wrapper.getInt
-        val chunk = size / Constants.NUM_OF_THREADS
+        val chunk = size / numOfThreads
         val index = 0
 
         val threads = new ListBuffer[Thread]()
 
-        for (i <- 1 to Constants.NUM_OF_THREADS) {
+        for (i <- 1 to numOfThreads) {
             val arr = new Array[Op[MyInt, Int]](chunk)
             for (j <- 0 to chunk - 1) {
                 val key = new MyInt(wrapper.getInt)
@@ -149,7 +148,7 @@ object Main {
         println("Done remove in " + (end_time - start_time) + " nsec");
     }
 
-    def handleGeneric (map: TrieMap[MyInt, Int], path: String) = {
+    def handleGeneric (numOfThreads: Int, map: TrieMap[MyInt, Int], path: String) = {
         // Read the data and wrap it with a little endian buffer
         println("Reading data from" + path)
         val data = Files.readAllBytes(Paths.get(path))
@@ -157,12 +156,12 @@ object Main {
         wrapper.order(ByteOrder.LITTLE_ENDIAN);
 
         val size = wrapper.getInt
-        val chunk = size / Constants.NUM_OF_THREADS
+        val chunk = size / numOfThreads
         val index = 0
 
         val threads = new ListBuffer[Thread]()
 
-        for (i <- 1 to Constants.NUM_OF_THREADS) {
+        for (i <- 1 to numOfThreads) {
             val arr = new Array[Op[MyInt, Int]](chunk)
             for (j <- 0 to chunk - 1) {
                 arr(j) = wrapper.getInt match {
@@ -181,24 +180,19 @@ object Main {
     }
 
     def main(args: Array[String]) = {
-        if (args.length == 0) {
-            println("Please enter a sample path")
+        if (args.length < 3 || args.length % 2 == 0) {
+            println("USAGE: run <num_of_threads> <action> <file> [<action> <file>]...")
         }
         else {
+            val numOfThreads = args(0).toInt
             val map = new TrieMap[MyInt, Int]()
 
-            for (i <- 0 to args.length - 1 by 2) {
-                if (args(i) == "insert") {
-                    handleInsert(map, args(i+1))
-                }
-                if (args(i) == "lookup") {
-                    handleLookup(map, args(i+1))
-                }
-                if (args(i) == "remove") {
-                    handleRemove(map, args(i+1))
-                }
-                if (args(i) == "action") {
-                    handleGeneric(map, args(i+1))
+            for (i <- 1 to args.length - 1 by 2) {
+                args(i) match {
+                case "insert" => handleInsert(numOfThreads, map, args(i+1))
+                case "lookup" => handleLookup(numOfThreads, map, args(i+1))
+                case "remove" => handleRemove(numOfThreads, map, args(i+1))
+                case "action" => handleGeneric(numOfThreads, map, args(i+1))
                 }
             }
         }
