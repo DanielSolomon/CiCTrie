@@ -13,7 +13,7 @@ class MyInt (val x: Int){
 }
 
 object Constants {
-    val NUM_OF_THREADS = 2
+    val NUM_OF_THREADS = 44
 }
 
 trait Op[Key, Value] {
