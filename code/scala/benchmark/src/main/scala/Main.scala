@@ -200,6 +200,7 @@ object Main {
             args(0).split(",").map(_.toInt).foreach(num =>
                 for (i <- 0 to args(1).toInt) {
                     println(num + " threads: iteration number " + (i + 1))
+                    Runtime.getRuntime.gc()
                     iteration(num, args)
                 }
             )
