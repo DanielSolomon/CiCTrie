@@ -86,6 +86,7 @@ struct main_node_t
         fnode_t fnode;
     } node;
     main_node_t * prev;
+    int gen;
 };
 
 typedef struct

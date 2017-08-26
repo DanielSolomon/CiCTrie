@@ -75,7 +75,7 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
  *********/
 
 static int          hash         (int key);
-static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
+static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode, int start_gen);
 
 /********
  * GCAS *
@@ -128,7 +128,9 @@ ctrie_t* create_ctrie()
     cnode_t cnode           = {0};
     main_node->type         = CNODE;
     main_node->node.cnode   = cnode;
+    main_node->gen          = 0;
     inode->main             = main_node;
+    inode->gen              = 0;
     root->type              = INODE;
     root->node.inode        = inode;
     ctrie->root             = root;
@@ -407,8 +409,9 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
  * @param old_main_node: the main node to be compressed.
  * @param lev: hash level.
  * @param thread_args: the thread arguments.
+ * @param start_gen: the generation of the ctrie.
  **/
-static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args)
+static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen)
 {
     main_node_t* new_main_node  = NULL;
     int32_t      delete_map     = 0;
@@ -417,6 +420,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     MALLOC(new_main_node, main_node_t);
     new_main_node->type         = CNODE;
     new_main_node->node.cnode   = *cnode;
+    new_main_node->gen          = start_gen;
 
     int i = 0;
     for (i = 0; i < MAX_BRANCHES; i++)
@@ -462,6 +466,10 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     if (!CAS(cas_address, old_main_node, new_main_node))
     {
         goto CLEANUP;
+    }
+    if (old_main_node->gen != start_gen)
+    {
+
     }
     DEBUG("compressed main_node %p new main_node %p", old_main_node, new_main_node);
     cnode->marked = 1;
@@ -583,7 +591,7 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return On success returns the value related to the found key if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
  **/
-static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen)
 {
     main_node_t* main_node = inode->main;
 
@@ -624,7 +632,12 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         {
         case INODE:
             // INode - recursively lookup.
-            return internal_lookup(&(branch->node.inode), key, lev + W, inode, thread_args);
+            inode_t* inode = &(branch->node.inode);
+            if (inode->gen == start_gen)
+            {
+                return internal_lookup(inode, key, lev + W, inode, thread_args, start_gen);
+            }
+                
         case SNODE:
             // SNode - simply compare the keys.
             if (key == branch->node.snode.key)
@@ -752,9 +765,10 @@ CLEANUP:
  * @param lev: the hash level.
  * @param old_snode: the old snode.
  * @param new_snode: the new snode.
+ * @param start_gen: the generation of the ctrie.
  * @return On sucess the created branch is returned, otherwise NULL is reutrned.
  **/
-static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
+static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode, int start_gen)
 {
     branch_t*    branch     = NULL;
     branch_t*    child      = NULL;
@@ -766,6 +780,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode)
     MALLOC(main_node, main_node_t);
     MALLOC(branch, branch_t);
 
+    main_node->gen = start_gen;
     if (lev < MAX_BRANCHES)
     {
         cnode_t cnode = {0};
@@ -1131,14 +1146,16 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* threa
  * @param main_node: main node which points to a cnode.
  * @param pos: position to removed.
  * @param flag: bmp flag to set off.
+ * @param start_gen: the generation of the ctrie.
  * @return On success a new cnode wrapped by main node is returned (without pos memeber), otherwise NULL is returned.
  **/
-static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag)
+static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag, int start_gen)
 {
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
 
     new_main_node->type                     = CNODE;
+    new_main_node->gen                      = start_gen;
     new_main_node->node.cnode               = main_node->node.cnode;
     new_main_node->node.cnode.bmp          &= ~flag;
     new_main_node->node.cnode.array[pos]    = NULL;
