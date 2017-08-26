@@ -77,6 +77,16 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 static int          hash         (int key);
 static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode);
 
+/********
+ * GCAS *
+ ********/
+static int gcas (inode_t* inode, main_node_t* old, main_node_t* new, ctrie_t* ctrie);
+static main_node_t* gcas_commit(inode_t* inode, main_node_t* m, ctrie_t* ctrie);
+static main_node_t* gcas_read(inode_t* inode, ctrie_t* ctrie);
+static inode_t* rdcss_read_root(ctrie_t* ctrie, int abort);
+static inode_t* rdcss_commit(ctrie_t* ctrie, int abort);
+
+
 /*******************
  * MACRO FUNCTIONS *
  *******************/
@@ -107,9 +117,11 @@ static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snod
 ctrie_t* create_ctrie()
 {
     ctrie_t*        ctrie       = NULL;
+    root_node_t*    root        = NULL;
     inode_t*        inode       = NULL;
     main_node_t*    main_node   = NULL;
     MALLOC(ctrie, ctrie_t);
+    MALLOC(root, root_node_t);
     MALLOC(inode, inode_t);
     MALLOC(main_node, main_node_t);
 
@@ -117,7 +129,9 @@ ctrie_t* create_ctrie()
     main_node->type         = CNODE;
     main_node->node.cnode   = cnode;
     inode->main             = main_node;
-    ctrie->inode            = inode;
+    root->type              = INODE;
+    root->node.inode        = inode;
+    ctrie->root             = root;
     ctrie->readonly         = 0;
     ctrie->insert           = ctrie_insert;
     ctrie->remove           = ctrie_remove;
@@ -126,7 +140,7 @@ ctrie_t* create_ctrie()
     return ctrie;
 
 CLEANUP:
-    free_them_all(3, ctrie, inode, main_node);
+    free_them_all(3, ctrie, root, main_node);
     return NULL;
 }
 
@@ -199,6 +213,7 @@ static void main_node_free(main_node_t* main_node)
         default:
             break;
         }
+        // TODO free main_node->prev?
         free(main_node);
     }
 }
@@ -263,7 +278,17 @@ static void ctrie_free(ctrie_t* ctrie)
 {
     if (ctrie != NULL) 
     {
-        inode_free(ctrie->inode);
+        switch (ctrie->root->type)
+        {
+        case INODE:
+            inode_free(ctrie->root->node.inode);
+            break;
+        case RDCSS_DESC:
+            // TODO
+            break;
+        default:
+            break;
+        }
         free(ctrie);
     }
 }
@@ -633,7 +658,8 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
 {
     int res = RESTART;
     do {
-        res = internal_lookup(ctrie->inode, key, 0, NULL, thread_args);
+        inode_t* root = rdcss_read_root(ctrie, 0);
+        res = internal_lookup(root, key, 0, NULL, thread_args);
         if (res == RESTART)
         {
             DEBUG("restarting lookup!");
@@ -1089,7 +1115,8 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* threa
 {
     int res = RESTART;
     do {
-        res = internal_insert(ctrie->inode, key, value, 0, NULL, thread_args);
+        inode_t* root = rdcss_read_root(ctrie, 0);
+        res = internal_insert(root, key, value, 0, NULL, thread_args);
         if (res == RESTART)
         {
             DEBUG("restarting insert!");
@@ -1289,11 +1316,148 @@ static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
 {
     int res = RESTART;
     do {
-        res = internal_remove(ctrie->inode, key, 0, NULL, thread_args);
+        inode_t* root = rdcss_read_root(ctrie, 0);
+        res = internal_remove(root, key, 0, NULL, thread_args);
         if (res == RESTART)
         {
             DEBUG("restarting remove!");
         }
     } while (res == RESTART);
     return res;
+}
+
+static int gcas(inode_t* inode, main_node_t* old, main_node_t* new, ctrie_t* ctrie)
+{
+    new->prev = old;
+    if (CAS(&(inode->main), old, new))
+    {
+        gcas_commit(inode, new, ctrie);
+        return new->prev == NULL;
+    }
+    else
+    {
+        return 0;
+    }
+}
+static main_node_t* gcas_commit(inode_t* inode, main_node_t* m, ctrie_t* ctrie)
+{
+    main_node_t* prev = m->prev;
+    inode_t* root = rdcss_read_root(ctrie, 1);
+    if (prev == NULL)
+    {
+        return m;
+    }
+    switch (prev->type)
+    {
+    case FNODE:
+        if (CAS(&(inode->main), m, prev->prev))
+        {
+            return prev->prev;
+        }
+        return gcas_commit(inode, m, ctrie);
+    default:
+        if (root->gen == inode->gen)
+        {
+            if (CAS(&(m->prev), prev, NULL))
+            {
+                return m;
+            }
+            else
+            {
+                return gcas_commit(inode, m, ctrie);
+            }
+        }
+        else
+        {
+            main_node_t* new_failed_node = NULL;
+            MALLOC(new_failed_node, main_node_t);
+            CAS(&(m->prev), prev, new_failed_node);
+CLEANUP:
+            return gcas_commit(inode, inode->main, ctrie);
+        }
+    }
+}
+
+static main_node_t* gcas_read(inode_t* inode, ctrie_t* ctrie)
+{
+    main_node_t* main_node = inode->main;
+    if (main_node->prev == NULL)
+    {
+        return main_node;
+    }
+    return gcas_commit(inode, main_node, ctrie);
+}
+
+static inode_t* rdcss_read_root(ctrie_t* ctrie, int abort)
+{
+    root_node_t* root = ctrie->root;
+    switch(root->type)
+    {
+        case INODE:
+            return root->node.inode;
+        case RDCSS_DESC:
+            return rdcss_commit(ctrie, abort);
+        default:
+            DEBUG("WOT");
+            return NULL;
+    }
+}
+
+static inode_t* rdcss_commit(ctrie_t* ctrie, int abort)
+{
+    root_node_t* root = ctrie->root;
+    root_node_t* new_root = NULL;
+    switch(root->type)
+    {
+        case INODE:
+            return root->node.inode;
+        case RDCSS_DESC:
+        {
+            rdcss_desc_t* desc = root->node.desc;
+            if (abort)
+            {
+                MALLOC(new_root, root_node_t);
+                new_root->type = INODE;
+                new_root->node.inode = desc->old_inode;
+                if (CAS(&(ctrie->root), root, new_root))
+                {
+                    return desc->old_inode;
+                }
+                free(new_root);
+                return rdcss_commit(ctrie, abort);
+            }
+            else
+            {
+                main_node_t* old_main_node = gcas_read(desc->old_inode, ctrie);
+                MALLOC(new_root, root_node_t);
+                new_root->type = INODE;
+                if (old_main_node == desc->expected_main_node)
+                {
+                    new_root->node.inode = desc->new_inode;
+                    if (CAS(&(ctrie->root), root, new_root))
+                    {
+                        desc->committed = 1;
+                        return desc->new_inode;
+                    }
+                    free(new_root);
+                    return rdcss_commit(ctrie, abort);
+                }
+                else
+                {
+                    new_root->node.inode = desc->old_inode;
+                    if (CAS(&(ctrie->root), root, new_root))
+                    {
+                        return desc->old_inode;
+                    }
+                    free(new_root);
+                    return rdcss_commit(ctrie, abort);
+                }
+            }
+        }
+        default:
+            DEBUG("WOT");
+            return NULL;
+    }
+CLEANUP:
+    return NULL;
 }

@@ -11,7 +11,7 @@
 
 typedef struct ctrie_t
 {
-    inode_t* inode;
+    root_node_t* root;
     uint8_t  readonly;
     int      (*insert) (struct ctrie_t* ctrie, int key, int value, thread_args_t* thread_args);
     int      (*remove) (struct ctrie_t* ctrie, int key, thread_args_t* thread_args);
