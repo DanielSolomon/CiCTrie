@@ -10,5 +10,6 @@ lazy val root = (project in file(".")).
     name := "Hello",
     libraryDependencies += scalaTest % Test,
     fork in run := true,
-    javaOptions in run += "-XX:-UseGCOverheadLimit"
+    javaOptions in run += "-XX:-UseGCOverheadLimit",
+    javaOptions in run += "-Xmx4g"
   )
