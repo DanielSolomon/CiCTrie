@@ -3,6 +3,26 @@
 #include "hazard_pointer.h"
 #include "common.h"
 
+void replace_last_hazard_pointer(hp_list_t* hp_list, void* arg)
+{
+    if (hp_list->next_hp == 0)
+    {
+        hp_list->next_hp = MAX_HAZARD_POINTERS - 1;
+    }
+    else
+    {
+        hp_list->next_hp--;
+    }
+
+    hp_list->hazard_pointers[hp_list->next_hp] = arg;
+    hp_list->next_hp++;
+    if (hp_list->next_hp == MAX_HAZARD_POINTERS)
+    {
+        hp_list->next_hp = 0;
+    }
+    FENCE;
+}
+
 void place_hazard_pointer(hp_list_t* hp_list, void* arg)
 {
     hp_list->hazard_pointers[hp_list->next_hp] = arg;
@@ -55,7 +75,7 @@ static void** prepare_hazard_pointers(thread_args_t* thread_args)
     hazard_pointers = malloc(TOTAL_HAZARD_POINTERS(thread_args) * sizeof(void*));
     if (hazard_pointers == NULL)
     {
-        return NULL;
+        FAIL("Failed to allocate: %d bytes for hazard pointers.", TOTAL_HAZARD_POINTERS(thread_args) * sizeof(void*));
     }
 
     for (i = 0; i < thread_args->num_of_threads; i++)
@@ -74,18 +94,21 @@ static void** prepare_hazard_pointers(thread_args_t* thread_args)
     }
 
     qsort(hazard_pointers, TOTAL_HAZARD_POINTERS(thread_args), sizeof(void*), compare);     
+
+CLEANUP:
     return hazard_pointers;
 }
 
 /**
- * Scans through the free list and attempts to free the nodes.
+ * Scans through the free list and attempts to free the nodes, returns the number of freed nodes.
  */
-static void scan(thread_args_t* thread_args)
+static int scan(thread_args_t* thread_args)
 {
     void** hazard_pointers = NULL;
     void* failed_list[FREE_LIST_SIZE] = {};
     int failed_length = 0;
     int i = 0;
+    int count = 0;
 
     hazard_pointers = prepare_hazard_pointers(thread_args);
     if (hazard_pointers == NULL)
@@ -98,10 +121,12 @@ static void scan(thread_args_t* thread_args)
         void* arg = thread_args->free_list->free_list[thread_args->free_list->length-1];
         thread_args->free_list->length--;
         
+        // CR: Tell me? CRAZY are you?
         if (NULL == bsearch(&arg, hazard_pointers, TOTAL_HAZARD_POINTERS(thread_args), sizeof(void*), compare))
         {
             PRINT("FREEING FREE LIST %p", arg);
             free(arg);
+            count++;
         }
         else
         {
@@ -122,17 +147,18 @@ CLEANUP:
     {
         free(hazard_pointers);
     }
+    return count;
 }
 
 void add_to_free_list(thread_args_t* thread_args, void* arg)
 {
     free_list_t* free_list = thread_args->free_list;
+    DEBUG("adding %p to free_list", arg);
 
-    // TODO is this ok?
-    while (free_list->length == FREE_LIST_SIZE)
+    while ((free_list->length == FREE_LIST_SIZE) && (scan(thread_args) == 0))
     {
+        DEBUG("sleeping! free_list length is %d, FREE_LIST_SIZE is %d", free_list->length, FREE_LIST_SIZE);
         sleep(1);
-        scan(thread_args);
     }
     free_list->free_list[free_list->length] = arg;
     free_list->length++;

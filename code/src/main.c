@@ -1,4 +1,11 @@
+#include <errno.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <time.h>
+
+#include "hazard_pointer.h"
 #include "nodes.h"
 #include "common.h"
 #include "ctrie.h"
@@ -13,30 +20,38 @@ typedef struct {
     int             size;
 } insert_thread_arg_t;
 
-void t1(thread_args_t* thread_arg)
-{
-    ctrie->insert(ctrie, 1, 100, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    ctrie->insert(ctrie, 2, 200, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    ctrie->remove(ctrie, 2, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    release_hazard_pointers(thread_arg->hp_lists[thread_arg->index]);
-}
+typedef struct {
+    thread_args_t*  thread_arg;
+    lookups_t*      lookups;
+    int             offset;
+    int             size;
+} lookup_thread_arg_t;
 
-void t2(thread_args_t* thread_arg)
+typedef struct {
+    thread_args_t*  thread_arg;
+    removes_t*      removes;
+    int             offset;
+    int             size;
+} remove_thread_arg_t;
+
+typedef struct {
+    thread_args_t*  thread_arg;
+    actions_t*      actions;
+    int             offset;
+    int             size;
+} action_thread_arg_t;
+
+int64_t get_time()
 {
-    ctrie->insert(ctrie, 1, 300, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    ctrie->insert(ctrie, 2, 400, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    ctrie->remove(ctrie, 2, thread_arg);
-    PRINT("key %d, val %d", 1, ctrie->lookup(ctrie, 1, thread_arg));
-    PRINT("key %d, val %d", 2, ctrie->lookup(ctrie, 2, thread_arg));
-    release_hazard_pointers(thread_arg->hp_lists[thread_arg->index]);
+    struct timespec tp;
+    if (clock_gettime(CLOCK_MONOTONIC, &tp) == -1)
+    {
+        FAIL("Failed to get time");
+    }
+    return tp.tv_sec * 1000000000 + tp.tv_nsec;
+
+CLEANUP:
+    return -1;
 }
 
 void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
@@ -55,68 +70,466 @@ void insert_test_thread(insert_thread_arg_t* insert_thread_arg)
     PRINT("after release");
 }
 
+void lookup_test_thread(lookup_thread_arg_t* lookup_thread_arg)
+{
+    int i;
+    int size    = lookup_thread_arg->size;
+    int offset  = lookup_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        lookup_t lookup = lookup_thread_arg->lookups->lookups[offset + i];
+        int ret = ctrie->lookup(ctrie, lookup.key, lookup_thread_arg->thread_arg);
+        PRINT("lookuped %d key=%d ret=%d", i, lookup.key, ret);
+        if (ret == NOTFOUND)
+        {
+            printf("key: %d not found\n", lookup.key);
+        }
+    }
+    PRINT("out of for");
+    release_hazard_pointers(lookup_thread_arg->thread_arg->hp_lists[lookup_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+void remove_test_thread(remove_thread_arg_t* remove_thread_arg)
+{
+    int i;
+    int size    = remove_thread_arg->size;
+    int offset  = remove_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        remove_t remove = remove_thread_arg->removes->removes[offset + i];
+        ctrie->remove(ctrie, remove.key, remove_thread_arg->thread_arg);
+        PRINT("removed %d key=%d", i, remove.key);
+    }
+    PRINT("out of for");
+    release_hazard_pointers(remove_thread_arg->thread_arg->hp_lists[remove_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+void action_test_thread(action_thread_arg_t* action_thread_arg)
+{
+    int i;
+    int size    = action_thread_arg->size;
+    int offset  = action_thread_arg->offset;
+    for (i = 0; i < size; i++)
+    {
+        action_t* curr_action = &(action_thread_arg->actions->actions[offset + i]);
+        DEBUG("Current Type is: %d", curr_action->type);
+        switch (curr_action->type)
+        {
+        case INSERT:
+            ctrie->insert(ctrie, curr_action->action.insert.key, curr_action->action.insert.value, action_thread_arg->thread_arg);
+            break;
+        case LOOKUP:
+            ctrie->lookup(ctrie, curr_action->action.insert.key, action_thread_arg->thread_arg);
+            break;
+        case REMOVE:
+            ctrie->remove(ctrie, curr_action->action.insert.key, action_thread_arg->thread_arg);
+            break;
+        default:
+            PRINT("unknown action %d", curr_action->type);
+        }
+    }
+    PRINT("out of for");
+    release_hazard_pointers(action_thread_arg->thread_arg->hp_lists[action_thread_arg->thread_arg->index]);
+    PRINT("after release");
+}
+
+int64_t insert_test(inserts_t* inserts, thread_args_t threads_args[])
+{
+    int i;
+    insert_thread_arg_t insert_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = inserts->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        insert_threads_args[i] = (insert_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .inserts    = inserts,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))insert_test_thread, &(insert_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+    int64_t end_time = get_time();
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
+}
+
+int64_t lookup_test(lookups_t* lookups, thread_args_t threads_args[])
+{
+    int i;
+    lookup_thread_arg_t lookup_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = lookups->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        lookup_threads_args[i] = (lookup_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .lookups    = lookups,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))lookup_test_thread, &(lookup_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+    int64_t end_time = get_time();
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
+}
+
+int64_t remove_test(removes_t* removes, thread_args_t threads_args[])
+{
+    int i;
+    remove_thread_arg_t remove_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = removes->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        remove_threads_args[i] = (remove_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .removes    = removes,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))remove_test_thread, &(remove_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+    int64_t end_time = get_time();
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
+}
+
+int64_t action_test(actions_t* actions, thread_args_t threads_args[])
+{
+    int i;
+    action_thread_arg_t action_threads_args[NUM_OF_THREADS] = {0};
+
+    int total_actions = actions->n;
+    int size = total_actions / NUM_OF_THREADS;
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        action_threads_args[i] = (action_thread_arg_t) {
+            .thread_arg = &(threads_args[i]),
+            .actions    = actions,
+            .offset     = i * size,
+            .size       = size,
+        };
+    }
+
+    int64_t start_time = get_time();
+    if (start_time == -1)
+    {
+        return -1;
+    }
+    pthread_t tids[NUM_OF_THREADS];
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_create(&(tids[i]), NULL, (void*(*)(void*))action_test_thread, &(action_threads_args[i]));
+    }
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        pthread_join(tids[i], NULL);
+    }
+    int64_t end_time = get_time();
+
+    int j = 0;
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        for (j = 0; j < threads_args[i].free_list->length; j++)
+        {
+            DEBUG("free %p", threads_args[i].free_list->free_list[j]);
+            free(threads_args[i].free_list->free_list[j]);
+        }
+        threads_args[i].free_list->length = 0;
+    }
+
+    if (end_time == -1)
+    {
+        return -1;
+    }
+    return end_time - start_time;
+}
+char* read_file(const char* path)
+{
+    FILE* fp    = NULL;
+    char* data  = NULL;
+
+    fp = fopen(path, "r");
+    if (fp == NULL)
+    {
+        FAIL("Failed to fopen %s", path);
+    }
+    struct stat file_status = {0};
+    if (fstat(fileno(fp), &file_status) < 0)
+    {
+        FAIL("Failed to stat file: %s (%d)", path, errno);
+    }
+    PRINT("File size is: %d", file_status.st_size);
+    data = malloc(file_status.st_size);
+    if (data == NULL)
+    {
+        FAIL("Failed to allocate %d bytes for data", file_status.st_size);
+    }
+    if (fread(data, file_status.st_size, 1, fp) != 1)
+    {
+        FAIL("Failed to read %d bytes from fp", file_status.st_size);
+    }
+
+    fclose(fp);
+    return data;
+
+CLEANUP:
+    
+    if (fp != NULL)
+    {
+        fclose(fp);
+    }
+    if (data != NULL)
+    {
+        free(data);
+    }
+    return NULL;
+}
+
+void handle_insert(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    inserts_t* inserts = (inserts_t*) data;
+    int64_t time = insert_test(inserts, threads_args);
+    PERS_PRINT("Insert took %ld nsecs", time);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
+void handle_lookup(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    lookups_t* lookups = (lookups_t*) data;
+    int64_t time = lookup_test(lookups, threads_args);
+    PERS_PRINT("Lookup took %ld nsecs", time);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
+void handle_remove(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    removes_t* removes = (removes_t*) data;
+    int64_t time = remove_test(removes, threads_args);
+    PERS_PRINT("Remove took %ld nsecs", time);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
+void handle_action(const char* path, thread_args_t threads_args[])
+{
+    char* data = NULL;
+    data = read_file(path);
+    if (data == NULL)
+    {
+        FAIL("Failed to read file");
+    }
+    actions_t* actions = (actions_t*) data;
+    int64_t time = action_test(actions, threads_args);
+    PERS_PRINT("Action took %ld nsecs", time);
+
+CLEANUP:
+    if (data != NULL)
+    {
+        free(data);
+    }
+}
+
 int main(int argc, char* argv[])
 {
-    PRINT("Start");
+    int i = 0;
 
-    hp_list_t hp_list1 = {.next_hp=0, .next_list_hp=0};
-    hp_list_t hp_list2 = {.next_hp=0, .next_list_hp=0};
-    hp_list_t* hp_array[2] = {
-        &hp_list1,
-        &hp_list2,
-    };
-    free_list_t free_list1 = {.length=0};
-    thread_args_t thread1_arg = {
-        .hp_lists = hp_array,
-        .free_list = &free_list1,
-        .index = 0,
-        .num_of_threads = 2,
-    };
-    free_list_t free_list2 = {.length=0};
-    thread_args_t thread2_arg = {
-        .hp_lists = hp_array,
-        .free_list = &free_list2,
-        .index = 1,
-        .num_of_threads = 2,
-    };
-    FILE* fp = NULL;
+    if ((argc & 1) == 0)
+    {
+        PRINT("Usage: %s [<insert|lookup|remove> <action_file>]*", argv[0]);
+        return -1;
+    }
+
+    PERS_PRINT("Start");
+    PERS_PRINT("Setting up %d threads", NUM_OF_THREADS);
+
+    hp_list_t*  hp_array[NUM_OF_THREADS]    = {0};
+    hp_list_t   hp_lists[NUM_OF_THREADS]    = {0};
+
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        hp_array[i] = &(hp_lists[i]);
+    }
+
+    free_list_t free_lists[NUM_OF_THREADS]      = {0};
+    thread_args_t threads_args[NUM_OF_THREADS]  = {0};
+    for (i = 0; i < NUM_OF_THREADS; i++)
+    {
+        threads_args[i] = (thread_args_t) {
+            .hp_lists   = hp_array,
+            .free_list  = &(free_lists[i]),
+            .index      = i,
+            .num_of_threads = NUM_OF_THREADS,
+        };
+    }
+
     ctrie = create_ctrie();
     if (ctrie == NULL)
     {
         FAIL("Failed to create ctrie");
     }
 
-    fp = fopen(argv[1], "r");
-    if (fp == NULL)
+    for (i = 1; i < argc; i += 2)
     {
-        FAIL("Failed to fopen %s", argv[1]);
+        if (strcmp(argv[i], "insert") == 0)
+        {
+            PRINT("Handle insert..");
+            handle_insert(argv[i + 1], threads_args);
+            PRINT("Handled insert");
+        }
+        else if (strcmp(argv[i], "lookup") == 0)
+        {
+            PRINT("Handle lookup..");
+            handle_lookup(argv[i + 1], threads_args);
+            PRINT("Handled lookup");
+        }
+        else if (strcmp(argv[i], "remove") == 0)
+        {
+            PRINT("Handle remove..");
+            handle_remove(argv[i + 1], threads_args);
+            PRINT("Handled remove");
+        }
+        else if (strcmp(argv[i], "action") == 0)
+        {
+            PRINT("Handle action..");
+            handle_action(argv[i + 1], threads_args);
+            PRINT("Handled action");
+        }
+        else
+        {
+            FAIL("Unknown action: %s", argv[i]);
+        }
     }
-    char buffer[804] = {0};
-    fread(buffer, 804, 1, fp);
-    inserts_t* inserts = (inserts_t*) buffer;
-
-    insert_thread_arg_t insert_thread1_arg = {
-        .thread_arg = &thread1_arg,
-        .inserts    = inserts,
-        .offset     = 0,
-        .size       = 50,
-    };
-
-    insert_thread_arg_t insert_thread2_arg = {
-        .thread_arg = &thread2_arg,
-        .inserts    = inserts,
-        .offset     = 50,
-        .size       = 50,
-    };
-
-    pthread_t tid1 = 0;
-    pthread_t tid2 = 0; 
-    //pthread_create(&tid1, NULL, (void*(*)(void*))t1, &thread1_arg);
-    //pthread_create(&tid2, NULL, (void*(*)(void*))t2, &thread2_arg);
-    pthread_create(&tid1, NULL, (void*(*)(void*))insert_test_thread, &insert_thread1_arg);
-    pthread_create(&tid2, NULL, (void*(*)(void*))insert_test_thread, &insert_thread2_arg);
-    pthread_join(tid1, NULL);
-    pthread_join(tid2, NULL);
 
 CLEANUP:
 
@@ -125,19 +538,6 @@ CLEANUP:
         ctrie->free(ctrie);
     }
 
-    int i=0;
-    for (i = 0; i < free_list1.length; i++)
-    {
-        free(free_list1.free_list[i]);
-    }
-    for (i = 0; i < free_list2.length; i++)
-    {
-        free(free_list2.free_list[i]);
-    }
-    if (fp != NULL)
-    {
-        fclose(fp);
-    }
-
+    PERS_PRINT("Done");
     return 0;
 }
