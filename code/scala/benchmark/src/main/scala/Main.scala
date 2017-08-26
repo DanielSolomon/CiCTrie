@@ -179,22 +179,30 @@ object Main {
         println("Done generic action in " + (end_time - start_time) + " nsec");
     }
 
+    def iteration(numOfThreads: Int, args: Array[String]) = {
+        val map = new TrieMap[MyInt, Int]()
+
+        for (i <- 2 to args.length - 1 by 2) {
+            args(i) match {
+            case "insert" => handleInsert(numOfThreads, map, args(i+1))
+            case "lookup" => handleLookup(numOfThreads, map, args(i+1))
+            case "remove" => handleRemove(numOfThreads, map, args(i+1))
+            case "action" => handleGeneric(numOfThreads, map, args(i+1))
+            }
+        }
+    }
+
     def main(args: Array[String]) = {
-        if (args.length < 3 || args.length % 2 == 0) {
-            println("USAGE: run <num_of_threads> <action> <file> [<action> <file>]...")
+        if (args.length < 4 || args.length % 2 == 1) {
+            println("USAGE: run <num_of_threads> <iterations> <action> <file> [<action> <file>]...")
         }
         else {
-            val numOfThreads = args(0).toInt
-            val map = new TrieMap[MyInt, Int]()
-
-            for (i <- 1 to args.length - 1 by 2) {
-                args(i) match {
-                case "insert" => handleInsert(numOfThreads, map, args(i+1))
-                case "lookup" => handleLookup(numOfThreads, map, args(i+1))
-                case "remove" => handleRemove(numOfThreads, map, args(i+1))
-                case "action" => handleGeneric(numOfThreads, map, args(i+1))
+            args(0).split(",").map(_.toInt).foreach(num =>
+                for (i <- 0 to args(1).toInt) {
+                    println(num + " threads: iteration number " + (i + 1))
+                    iteration(num, args)
                 }
-            }
+            )
         }
     }
 }
