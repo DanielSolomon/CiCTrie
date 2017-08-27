@@ -34,7 +34,7 @@ static void main_node_free(main_node_t* main_node);
 
 static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
-static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie);
+static void         compress(inode_t* inode, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie);
 static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
 
 /*******************
@@ -94,10 +94,10 @@ static inode_t* rdcss_commit(ctrie_t* ctrie, int abort);
  *******************/
 
 #define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
-#define CAS_OR_RESTART(CASed, old, new, msg, thread_args, new_branch) do {   \
+#define CAS_OR_RESTART(inode, old, new, ctrie, msg, thread_args, new_branch) do {   \
     if (new == NULL)                                \
         FAIL(msg);                                  \
-    if (CAS(CASed, old, new))                       \
+    if (gcas(inode, old, new, ctrie))               \
     {                                               \
         DEBUG("CASed old %p and new %p", old, new); \
         old->node.cnode.marked = 1;                 \
@@ -414,7 +414,7 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
  * @param start_gen: the generation of the ctrie.
  * @param ctrie: the ctrie.
  **/
-static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie)
+static void compress(inode_t* inode, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie)
 {
     main_node_t* new_main_node  = NULL;
     int32_t      delete_map     = 0;
@@ -466,7 +466,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         goto CLEANUP;
     }
     DEBUG("to contracted 3");
-    if (!CAS(cas_address, old_main_node, new_main_node))
+    if (!gcas(inode, old_main_node, new_main_node, ctrie))
     {
         goto CLEANUP;
     }
@@ -519,7 +519,7 @@ static void clean(inode_t* inode, int lev, thread_args_t* thread_args, int start
     main_node_t* old_main_node = gcas_read(inode, ctrie);
     if (old_main_node->type == CNODE)
     {
-        compress(&(inode->main), old_main_node, lev, thread_args, start_gen, ctrie);
+        compress(inode, old_main_node, lev, thread_args, start_gen, ctrie);
     }
 }
 
@@ -1069,7 +1069,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             branch_t* new_branch = NULL;
             // TODO renew here?
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch, start_gen);
-            CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to insert into cnode", thread_args, new_branch);
+            CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to insert into cnode", thread_args, new_branch);
             //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
             return OK;
         }
@@ -1116,7 +1116,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             {
                 branch_t* new_branch = NULL;
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch, start_gen);
-                CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode", thread_args, new_branch);
+                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode", thread_args, new_branch);
                 add_to_free_list(thread_args, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
@@ -1131,7 +1131,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 }
                 // TODO renew here?
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child, start_gen);
-                CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode branch", thread_args, child);
+                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode branch", thread_args, child);
                 add_to_free_list(thread_args, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
@@ -1154,7 +1154,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             {
                 FAIL("failed to insert to lnode list");
             }
-            if (CAS(&(inode->main), main_node, new_main_node))
+            if (gcas(inode, main_node, new_main_node, ctrie))
             {
                 lnode_t* ptr = main_node->node.lnode.next;
                 while (ptr != NULL)
@@ -1415,7 +1415,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             goto DONE;
                         }
                         DEBUG("to contracted 2");
-                        if (!CAS(&(inode->main), main_node, new_main_node))
+                        if (gcas(inode, main_node, new_main_node, ctrie))
                         {
                             res = RESTART;
                             free(new_main_node);
@@ -1459,7 +1459,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             case FAILED:
                 FAIL("failed to remove %d from lnode list", key);
             case OK:
-                if (CAS(&(inode->main), main_node, new_main_node))
+                if (gcas(inode, main_node, new_main_node, ctrie))
                 {
                     lnode_t* ptr = main_node->node.lnode.next;
                     while (ptr != NULL)
