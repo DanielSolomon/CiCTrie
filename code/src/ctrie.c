@@ -32,9 +32,9 @@ static void main_node_free(main_node_t* main_node);
  * Clean functions *
  *******************/
 
-static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args, int start_gen);
+static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
 static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
-static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen);
+static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie);
 static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
 
 /*******************
@@ -412,8 +412,9 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
  * @param lev: hash level.
  * @param thread_args: the thread arguments.
  * @param start_gen: the generation of the ctrie.
+ * @param ctrie: the ctrie.
  **/
-static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen)
+static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen, ctrie_t* ctrie)
 {
     main_node_t* new_main_node  = NULL;
     int32_t      delete_map     = 0;
@@ -439,11 +440,11 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
             if (curr_branch->type == INODE && curr_branch->node.inode.main->type == TNODE)
             {
                 inode_t*     tmp_inode      = &(curr_branch->node.inode);
-                main_node_t* tmp_main_node  = tmp_inode->main;
+                main_node_t* tmp_main_node  = gcas_read(tmp_inode, ctrie);
                 DEBUG("Replacing branch %p - main_node %p", curr_branch, tmp_main_node);
                 PLACE_TMP_HP(thread_args, tmp_main_node);
                 // TODO accessing tmp_inode after replacing HP.
-                if (tmp_inode->marked || tmp_inode->main != tmp_main_node)
+                if (tmp_inode->marked || gcas_read(tmp_inode, ctrie) != tmp_main_node)
                 {
                     DEBUG("SHEET");
                     goto CLEANUP;
@@ -509,15 +510,16 @@ CLEANUP:
  * @param inode: inode to clean.
  * @param lev: hash level.
  * @param thread_args: the thread arguments.
+ * @param ctrie: the ctrie.
  * @note Assumes that inode and inode->main are protected with HP.
  **/
-static void clean(inode_t* inode, int lev, thread_args_t* thread_args, int start_gen)
+static void clean(inode_t* inode, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie)
 {
     DEBUG("cleaning inode %p", inode);
-    main_node_t* old_main_node = inode->main;
-    if (inode->main->type == CNODE)
+    main_node_t* old_main_node = gcas_read(inode, ctrie);
+    if (old_main_node->type == CNODE)
     {
-        compress(&(inode->main), old_main_node, lev, thread_args, start_gen);
+        compress(&(inode->main), old_main_node, lev, thread_args, start_gen, ctrie);
     }
 }
 
@@ -611,7 +613,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
     }
 
     PLACE_HP(thread_args, main_node);
-    if (inode->marked || inode->main != main_node)
+    if (inode->marked || gcas_read(inode, ctrie) != main_node)
     {
         return RESTART;
     }
@@ -681,7 +683,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         }
     case TNODE:
         // TNode - help resurrect it and restart.
-        clean(parent, lev - W, thread_args, start_gen);
+        clean(parent, lev - W, thread_args, start_gen, ctrie);
         return RESTART;
     case LNODE:
         // LNode - search the linked list.
@@ -1049,7 +1051,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
     branch_t*    child      = NULL;
 
     PLACE_HP(thread_args, main_node);
-    if (inode->marked || inode->main != main_node)
+    if (inode->marked || gcas_read(inode, ctrie) != main_node)
     {
         return RESTART;
     }
@@ -1139,7 +1141,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         }
         break;
     case TNODE:
-        clean(parent, lev - W, thread_args, start_gen);
+        clean(parent, lev - W, thread_args, start_gen, ctrie);
         break;
     case LNODE:
     {
@@ -1334,7 +1336,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
     branch_t*    branch     = NULL;
 
     PLACE_HP(thread_args, main_node);
-    if (inode->marked || inode->main != main_node)
+    if (inode->marked || gcas_read(inode, ctrie) != main_node)
     {
         return RESTART;
     }
@@ -1443,7 +1445,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             return res;
         }
         case TNODE:
-            clean(parent, lev - W, thread_args, start_gen);
+            clean(parent, lev - W, thread_args, start_gen, ctrie);
             return RESTART;
         case LNODE:
         {
