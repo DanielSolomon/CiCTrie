@@ -293,6 +293,7 @@ static void ctrie_free(ctrie_t* ctrie)
         default:
             break;
         }
+        free(ctrie->root);
         free(ctrie);
     }
 }
