@@ -32,9 +32,9 @@ static void main_node_free(main_node_t* main_node);
  * Clean functions *
  *******************/
 
-static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
-static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args);
-static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
+static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args, int start_gen);
+static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
+static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int start_gen);
 static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
 
 /*******************
@@ -48,18 +48,19 @@ static branch_t* resurrect(main_node_t* inode);
  * Internals functions *
  ***********************/
 
-static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
-static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args);
-static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args);
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie);
 
 /*******************
  * CNode functions *
  *******************/
 
-static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch);
-static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch);
-static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch);
-static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag);
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch, int start_gen);
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch, int start_gen);
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch, int start_gen);
+static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag, int start_gen);
+static main_node_t* cnode_renew(main_node_t* main_node, int new_gen, ctrie_t * ctrie, thread_args_t* thread_args, int32_t* delete_map);
 
 /*******************
  * LNode functions *
@@ -76,6 +77,7 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 
 static int          hash         (int key);
 static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode, int start_gen);
+static branch_t*    copy_to_gen(branch_t* inode, ctrie_t* ctrie, int gen);
 
 /********
  * GCAS *
@@ -509,13 +511,13 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @note Assumes that inode and inode->main are protected with HP.
  **/
-static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
+static void clean(inode_t* inode, int lev, thread_args_t* thread_args, int start_gen)
 {
     DEBUG("cleaning inode %p", inode);
     main_node_t* old_main_node = inode->main;
     if (inode->main->type == CNODE)
     {
-        compress(&(inode->main), old_main_node, lev, thread_args);
+        compress(&(inode->main), old_main_node, lev, thread_args, start_gen);
     }
 }
 
@@ -526,12 +528,14 @@ static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
  * @param key_hash: a hash of the key to be cleaned.
  * @param lev: hash level.
  * @param thread_args: the thread arguments.
+ * @param start_gen: the generation of the ctrie.
+ * @param ctrie: the ctrie.
  * @todo this function may fail...
  */
-static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args)
+static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie)
 {
-    main_node_t* parent_main_node   = parent->main;
-    main_node_t* main_node          = inode->main;
+    main_node_t* parent_main_node   = gcas_read(parent, ctrie);
+    main_node_t* main_node          = gcas_read(inode, ctrie);
     main_node_t* new_main_node      = NULL;
 
     if (parent_main_node->type == CNODE)
@@ -543,7 +547,7 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
         if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) 
         {
             branch_t* new_branch = NULL;
-            new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, &new_branch);
+            new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, &new_branch, start_gen);
             if (new_main_node == NULL) 
             {
                 FAIL("Failed to update cnode");
@@ -553,14 +557,18 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
             {
                 free(new_main_node);
                 branch_free(new_branch);
-                clean_parent(parent, inode, key_hash, lev, thread_args);
+                clean_parent(parent, inode, key_hash, lev, thread_args, start_gen, ctrie);
             }
             DEBUG("to contracted 1");
-            if (!CAS(&(parent->main), parent_main_node, new_main_node))
+            if (!gcas(parent, parent_main_node, new_main_node, ctrie))
             {
                 free(new_main_node);
                 branch_free(new_branch);
-                clean_parent(parent, inode, key_hash, lev, thread_args);
+                if (rdcss_read_root(ctrie, 0)->gen != start_gen)
+                {
+                    return;
+                }
+                clean_parent(parent, inode, key_hash, lev, thread_args, start_gen, ctrie);
             }
 
             parent_main_node->node.cnode.marked = 1;
@@ -589,11 +597,13 @@ CLEANUP:
  * @param lev: hash level.
  * @param parent: parent inode pointer.
  * @param thread_args: the thread arguments.
+ * @param start_get: the generation of the ctrie.
+ * @param ctrie: the ctrie.
  * @return On success returns the value related to the found key if found, NOTFOUND if the key doesn't exists, or RESTART if the lookup needs to be called again.
  **/
-static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen)
+static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie)
 {
-    main_node_t* main_node = inode->main;
+    main_node_t* main_node = gcas_read(inode, ctrie);
 
     if (main_node == NULL)
     {
@@ -631,13 +641,34 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         switch (branch->type)
         {
         case INODE:
+        {
             // INode - recursively lookup.
-            inode_t* inode = &(branch->node.inode);
-            if (inode->gen == start_gen)
+            inode_t* child_inode = &(branch->node.inode);
+            if (child_inode->gen == start_gen)
             {
-                return internal_lookup(inode, key, lev + W, inode, thread_args, start_gen);
+                return internal_lookup(child_inode, key, lev + W, inode, thread_args, start_gen, ctrie);
             }
-                
+            else
+            {
+                int32_t delete_map;
+                main_node_t* new_main_node = cnode_renew(main_node, start_gen, ctrie, thread_args, &delete_map);
+                if (new_main_node == NULL)
+                {
+                    FAIL("Failed to renew cnode");
+                }
+                if (gcas(inode, main_node, new_main_node, ctrie))
+                {
+                    // TODO this recursive call is stupid.
+                    // Don't free main_node - it belongs to a snapshot.
+                    return internal_lookup(inode, key, lev, parent, thread_args, start_gen, ctrie);
+                }
+                else
+                {
+                    selective_main_node_free(new_main_node, delete_map);
+                    return RESTART;
+                }
+            }
+        }
         case SNODE:
             // SNode - simply compare the keys.
             if (key == branch->node.snode.key)
@@ -650,7 +681,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         }
     case TNODE:
         // TNode - help resurrect it and restart.
-        clean(parent, lev - W, thread_args);
+        clean(parent, lev - W, thread_args, start_gen);
         return RESTART;
     case LNODE:
         // LNode - search the linked list.
@@ -658,6 +689,9 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
     default:
         return NOTFOUND;
     }
+
+CLEANUP:
+    return RESTART;
 }
 
 /**
@@ -672,7 +706,7 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
     int res = RESTART;
     do {
         inode_t* root = rdcss_read_root(ctrie, 0);
-        res = internal_lookup(root, key, 0, NULL, thread_args);
+        res = internal_lookup(root, key, 0, NULL, thread_args, root->gen, ctrie);
         if (res == RESTART)
         {
             DEBUG("restarting lookup!");
@@ -690,9 +724,10 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
  * @param key: the new key.
  * @param value: the new value.
  * @param new_branch: an out parameter that is set to the newly created branch.
+ * @param start_gen: the generation of the ctrie.
  * @return On success an updated cnode is returned wrapped by a main node, otherwise NULL is returned.
  **/
-static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch)
+static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch, int start_gen)
 {
     DEBUG("inserting %d %d to cnode %p", key, value, main_node);
     main_node_t*    new_main_node   = NULL;
@@ -704,6 +739,9 @@ static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int 
     branch->node.snode.key      = key;
     branch->node.snode.value    = value;
 
+    // TODO really set gen here? If we do this here and later renew the cnode (if it has a child inode from a previous gen), it won't be freed.
+    // Either don't set here or check the gen when deciding whether to free. This applies to the other cnode functions as well.
+    new_main_node->gen                      = start_gen;
     new_main_node->type                     = CNODE;
     new_main_node->node.cnode               = main_node->node.cnode;
     new_main_node->node.cnode.bmp          |= flag;
@@ -725,13 +763,14 @@ CLEANUP:
  * @param key: the new key.
  * @param value: the new value.
  * @param new_branch: an out parameter that is set to the newly created branch.
+ * @param start_gen: the generation of the ctrie.
  * @return On success the updated cnode wrapped by a main node is returned, otherwise NULL is returned.
  **/
-static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch)
+static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int value, branch_t** new_branch, int start_gen)
 {
     // cnode_insert and cnode_update differ only in updating flag (passing flag 0 does nothing).
     DEBUG("updating %d %d to cnode %p", key, value, main_node);
-    main_node_t* new_main_node = cnode_insert(main_node, pos, 0, key, value, new_branch);
+    main_node_t* new_main_node = cnode_insert(main_node, pos, 0, key, value, new_branch, start_gen);
     new_main_node->node.cnode.length--;
     return new_main_node;
 }
@@ -741,14 +780,16 @@ static main_node_t* cnode_update(main_node_t* main_node, int pos, int key, int v
  * @param main_node: the main node which contains the cnode.
  * @param pos: the position in the array to be updated.
  * @param branch: the new branch.
+ * @param start_gen: the generation of the ctrie.
  * @return On success the updated cnode wrapped by a main node is returned, otherwise NULL is returned.
  **/
-static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch)
+static main_node_t* cnode_update_branch(main_node_t* main_node, int pos, branch_t* branch, int start_gen)
 {
     DEBUG("updating branch %p in pos %d of cnode %p", branch, pos, main_node);
     main_node_t* new_main_node = NULL;
     MALLOC(new_main_node, main_node_t);
 
+    new_main_node->gen                      = start_gen;
     new_main_node->type                     = CNODE;
     new_main_node->node.cnode               = main_node->node.cnode;
     new_main_node->node.cnode.array[pos]    = branch;
@@ -789,7 +830,7 @@ static branch_t* create_branch(int lev, snode_t* old_snode, snode_t* new_snode, 
         if (pos1 == pos2)
         {
             DEBUG("calling create_branch recursively");
-            child = create_branch(lev + W, old_snode, new_snode);
+            child = create_branch(lev + W, old_snode, new_snode, start_gen);
             if (child == NULL)
             {
                 FAIL("failed to create child branch");
@@ -993,9 +1034,9 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return On failure FAILED is returned, otherwise OK is returned if (`key`, `value`) was inserted, or RESTART if the insert should be called again.
  */
-static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args)
+static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie)
 {
-    main_node_t* main_node  = inode->main;
+    main_node_t* main_node = gcas_read(inode, ctrie);
 
     if (main_node == NULL)
     {
@@ -1024,7 +1065,8 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         {
             // If so, simply create a new branch to an SNode and insert it.
             branch_t* new_branch = NULL;
-            main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch);
+            // TODO renew here?
+            main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch, start_gen);
             CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to insert into cnode", thread_args, new_branch);
             //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
             return OK;
@@ -1039,13 +1081,39 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         switch (branch->type)
         {
         case INODE:
+        {
             // INode - recursively insert.
-            return internal_insert(&(branch->node.inode), key, value, lev + W, inode, thread_args);
+            inode_t* child_inode = &(branch->node.inode);
+            if (child_inode->gen == start_gen)
+            {
+                return internal_insert(child_inode, key, value, lev + W, inode, thread_args, start_gen, ctrie);
+            }
+            else
+            {
+                int32_t delete_map;
+                main_node_t* new_main_node = cnode_renew(main_node, start_gen, ctrie, thread_args, &delete_map);
+                if (new_main_node == NULL)
+                {
+                    FAIL("Failed to renew cnode");
+                }
+                if (gcas(inode, main_node, new_main_node, ctrie))
+                {
+                    // TODO this recursive call is stupid.
+                    // Don't free main_node - it belongs to a snapshot.
+                    return internal_insert(inode, key, value, lev, parent, thread_args, start_gen, ctrie);
+                }
+                else
+                {
+                    selective_main_node_free(new_main_node, delete_map);
+                    return RESTART;
+                }
+            }
+        }
         case SNODE:
             if (key == branch->node.snode.key)
             {
                 branch_t* new_branch = NULL;
-                main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch);
+                main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch, start_gen);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode", thread_args, new_branch);
                 add_to_free_list(thread_args, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
@@ -1054,12 +1122,13 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             else
             {
                 snode_t new_snode = { .key = key, .value = value };
-                child = create_branch(lev + W, &(branch->node.snode), &new_snode);
+                child = create_branch(lev + W, &(branch->node.snode), &new_snode, start_gen);
                 if (child == NULL)
                 {
                     return FAILED;
                 }
-                main_node_t* new_main_node = cnode_update_branch(main_node, pos, child);
+                // TODO renew here?
+                main_node_t* new_main_node = cnode_update_branch(main_node, pos, child, start_gen);
                 CAS_OR_RESTART(&(inode->main), main_node, new_main_node, "Failed to update cnode branch", thread_args, child);
                 add_to_free_list(thread_args, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
@@ -1070,7 +1139,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         }
         break;
     case TNODE:
-        clean(parent, lev - W, thread_args);
+        clean(parent, lev - W, thread_args, start_gen);
         break;
     case LNODE:
     {
@@ -1131,7 +1200,7 @@ static int ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* threa
     int res = RESTART;
     do {
         inode_t* root = rdcss_read_root(ctrie, 0);
-        res = internal_insert(root, key, value, 0, NULL, thread_args);
+        res = internal_insert(root, key, value, 0, NULL, thread_args, root->gen, ctrie);
         if (res == RESTART)
         {
             DEBUG("restarting insert!");
@@ -1168,6 +1237,78 @@ CLEANUP:
     return NULL;
 }
 
+
+/**
+ * Returns a copy of the inode, with the new gen.
+ * @param inode: the branch that wraps the inode.
+ * @param ctrie: the ctrie.
+ * @param gen: the new generation.
+ * @return On success a new inode  wrapped by branch is returned, otherwise NULL is returned.
+ **/
+static branch_t* copy_to_gen(branch_t* inode, ctrie_t* ctrie, int gen)
+{
+    branch_t* new_inode = NULL;
+    MALLOC(new_inode, branch_t);
+
+    new_inode->type = INODE;
+    new_inode->node.inode.main = gcas_read(&(inode->node.inode), ctrie);
+    new_inode->node.inode.gen = gen;
+    return new_inode;
+
+CLEANUP:
+    free_them_all(1, new_inode);
+    return NULL;
+}
+
+/**
+ * Returns a cnode of the new generation whose child inodes are also of the new generation.
+ * @param main_node: main node which points to a cnode.
+ * @param new_gen: the generation of the ctrie.
+ * @param ctrie: the ctrie.
+ * @param thread_args: the thread arguments.
+ * @param delete_map: an out parameter set to be a map of inodes that should be deleted upon CAS failure.
+ * @return On success a new cnode wrapped by main node is returned, otherwise NULL is returned.
+ **/
+static main_node_t* cnode_renew(main_node_t* main_node, int new_gen, ctrie_t * ctrie, thread_args_t* thread_args, int32_t * delete_map)
+{
+    int i = 0;
+    main_node_t* new_main_node = NULL;
+    cnode_t* cnode = &(main_node->node.cnode);
+    MALLOC(new_main_node, main_node_t);
+    *delete_map = 0;
+
+    new_main_node->type                     = CNODE;
+    new_main_node->gen                      = new_gen;
+    new_main_node->node.cnode               = *cnode;
+    for (i = 0; i < MAX_BRANCHES; i++)
+    {
+        if (cnode->bmp & (1 << i))
+        {
+            branch_t* branch = cnode->array[i];
+            PLACE_TMP_HP(thread_args, branch);
+            if (cnode->marked)
+            {
+                FAIL("failed to renew");
+            }
+            if (branch->type == INODE)
+            {
+               branch_t* new_branch = copy_to_gen(branch, ctrie, new_gen); 
+               if (new_branch == NULL)
+               {
+                   FAIL("Failed to copy inode to new gen");
+               }
+               new_main_node->node.cnode.array[i] = new_branch;
+               *delete_map |= 1 << i;
+            }
+        }
+    }
+    return new_main_node;
+
+CLEANUP:
+    selective_main_node_free(new_main_node, *delete_map);
+    return NULL;
+}
+
 /**
  * Attempts to remove `key` from the subtree of `inode`.
  * @param inode: subtree from which to remove `key`.
@@ -1175,11 +1316,13 @@ CLEANUP:
  * @param lev: hash level.
  * @param parent: parent inode of `inode`.
  * @param thread_args: the thread arguments.
+ * @param start_get: the generation of the ctrie.
+ * @param ctrie: the ctrie.
  * @return On failure, FAILED is returned, otherwise if `key` was removed its value is returned, if `key` couldn't be found NOTFOUND is returned, RESTART my be the result if `internal_remove` shoud be called again.
  **/
-static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args)
+static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, thread_args_t* thread_args, int start_gen, ctrie_t* ctrie)
 {
-    main_node_t* main_node  = inode->main;
+    main_node_t* main_node = gcas_read(inode, ctrie);
 
     if (main_node == NULL)
     {
@@ -1221,9 +1364,34 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             switch (branch->type)
             {
                 case INODE:
+                {
                     // INode - recursively remove.
-                    res = internal_remove(&(branch->node.inode), key, lev + W, inode, thread_args);
-                    break;
+                    inode_t* child_inode = &(branch->node.inode);
+                    if (child_inode->gen == start_gen)
+                    {
+                        return internal_remove(child_inode, key, lev + W, inode, thread_args, start_gen, ctrie);
+                    }
+                    else
+                    {
+                        int32_t delete_map;
+                        main_node_t* new_main_node = cnode_renew(main_node, start_gen, ctrie, thread_args, &delete_map);
+                        if (new_main_node == NULL)
+                        {
+                            FAIL("Failed to renew cnode");
+                        }
+                        if (gcas(inode, main_node, new_main_node, ctrie))
+                        {
+                            // TODO this recursive call is stupid.
+                            // Don't free main_node - it belongs to a snapshot.
+                            return internal_remove(inode, key, lev, parent, thread_args, start_gen, ctrie);
+                        }
+                        else
+                        {
+                            selective_main_node_free(new_main_node, delete_map);
+                            return RESTART;
+                        }
+                    }
+                }
                 case SNODE:
                     if (key != branch->node.snode.key)
                     {
@@ -1232,7 +1400,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                     else
                     {
                         res = branch->node.snode.value;
-                        main_node_t *new_main_node = cnode_remove(main_node, pos, flag);
+                        main_node_t *new_main_node = cnode_remove(main_node, pos, flag, start_gen);
                         if (new_main_node == NULL)
                         {
                             FAIL("Failed to remove %d from cnode", key);
@@ -1270,12 +1438,12 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             }
             if (main_node->type == TNODE)
             {
-                clean_parent(parent, inode, hash(key), lev - W, thread_args);
+                clean_parent(parent, inode, hash(key), lev - W, thread_args, start_gen, ctrie);
             }
             return res;
         }
         case TNODE:
-            clean(parent, lev - W, thread_args);
+            clean(parent, lev - W, thread_args, start_gen);
             return RESTART;
         case LNODE:
         {
@@ -1334,7 +1502,7 @@ static int ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args)
     int res = RESTART;
     do {
         inode_t* root = rdcss_read_root(ctrie, 0);
-        res = internal_remove(root, key, 0, NULL, thread_args);
+        res = internal_remove(root, key, 0, NULL, thread_args, root->gen, ctrie);
         if (res == RESTART)
         {
             DEBUG("restarting remove!");
