@@ -114,6 +114,7 @@ def postprocess_dict(d):
         min_    = min(results)
         max_    = max(results)
         l.append(Result(threads, avg, var, min_, max_))
+        print('#threads: {} var: {} min: {} max: {}'.format(threads, var, min_, max_))
     return l
 
 def plot_graph(s, c, title):
@@ -130,7 +131,9 @@ def plot_graph(s, c, title):
         )
 
 def main(scala_path, c_path):
+    print('scala')
     scala_i, scala_l, scala_r, scala_a  = [postprocess_dict(x) if x else [] for x in scala_to_dicts(scala_path)]
+    print('c')
     c_i, c_l, c_r, c_a                  = [postprocess_dict(x) if x else [] for x in c_to_dicts(c_path)]
     plot_graph(scala_i, c_i, 'insert')
     plot_graph(scala_l, c_l, 'lookup')
