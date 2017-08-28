@@ -499,6 +499,21 @@ int main(int argc, char* argv[])
         FAIL("Failed to create ctrie");
     }
 
+    ctrie_t* new_ctrie = ctrie->snapshot(ctrie);
+    ctrie->insert(ctrie, 1, 1, threads_args);
+    PRINT("%d", ctrie->lookup(ctrie, 1, threads_args));
+    PRINT("%d", new_ctrie->lookup(new_ctrie, 1, threads_args));
+    ctrie_t* new_new_ctrie = ctrie->snapshot(ctrie);
+    ctrie->insert(ctrie, 2, 2, threads_args);
+    PRINT("%d", ctrie->lookup(ctrie, 2, threads_args));
+    PRINT("%d", new_ctrie->lookup(new_ctrie, 2, threads_args));
+    PRINT("%d", new_new_ctrie->lookup(new_new_ctrie, 2, threads_args));
+    PRINT("%d", new_new_ctrie->lookup(new_new_ctrie, 1, threads_args));
+    ctrie->remove(ctrie, 1, threads_args);
+    PRINT("%d", ctrie->lookup(ctrie, 1, threads_args));
+    PRINT("%d", new_new_ctrie->lookup(new_new_ctrie, 1, threads_args));
+    return 0;
+
     for (i = 1; i < argc; i += 2)
     {
         if (strcmp(argv[i], "insert") == 0)

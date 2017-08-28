@@ -14,10 +14,11 @@
  * CTrie API functions *
  ***********************/
 
-static int  ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* thread_args);
-static int  ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args);
-static int  ctrie_lookup(ctrie_t* ctrie, int key, thread_args_t* thread_args);
-static void ctrie_free  (ctrie_t* ctrie);
+static int      ctrie_insert(ctrie_t* ctrie, int key, int value, thread_args_t* thread_args);
+static int      ctrie_remove(ctrie_t* ctrie, int key, thread_args_t* thread_args);
+static int      ctrie_lookup(ctrie_t* ctrie, int key, thread_args_t* thread_args);
+static ctrie_t* ctrie_snapshot(ctrie_t* ctrie);
+static void     ctrie_free  (ctrie_t* ctrie);
 
 /******************
  * Free functions *
@@ -78,6 +79,7 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 static int          hash         (int key);
 static branch_t*    create_branch(int lev, snode_t* old_snode, snode_t* new_snode, int start_gen);
 static branch_t*    copy_to_gen(branch_t* inode, ctrie_t* ctrie, int gen);
+static inode_t*     copy_to_gen_raw(inode_t* inode, ctrie_t* ctrie, int gen);
 
 /********
  * GCAS *
@@ -86,7 +88,9 @@ static int gcas (inode_t* inode, main_node_t* old, main_node_t* new, ctrie_t* ct
 static main_node_t* gcas_commit(inode_t* inode, main_node_t* m, ctrie_t* ctrie);
 static main_node_t* gcas_read(inode_t* inode, ctrie_t* ctrie);
 static inode_t* rdcss_read_root(ctrie_t* ctrie, int abort);
+static root_node_t* rdcss_read_root_raw(ctrie_t* ctrie, int abort);
 static inode_t* rdcss_commit(ctrie_t* ctrie, int abort);
+static int rdcss_root(ctrie_t* ctrie, root_node_t* old_inode, main_node_t* expected_main_node, inode_t* new_inode);
 
 
 /*******************
@@ -100,9 +104,12 @@ static inode_t* rdcss_commit(ctrie_t* ctrie, int abort);
     if (gcas(inode, old, new, ctrie))               \
     {                                               \
         DEBUG("CASed old %p and new %p", old, new); \
+        if (new->gen == old->gen) \
+        {\
         old->node.cnode.marked = 1;                 \
         FENCE;                                      \
         add_to_free_list(thread_args, old);         \
+        }\
     }                                               \
     else                                            \
     {                                               \
@@ -140,6 +147,7 @@ ctrie_t* create_ctrie()
     ctrie->insert           = ctrie_insert;
     ctrie->remove           = ctrie_remove;
     ctrie->lookup           = ctrie_lookup;
+    ctrie->snapshot         = ctrie_snapshot;
     ctrie->free             = ctrie_free;
     return ctrie;
 
@@ -471,9 +479,10 @@ static void compress(inode_t* inode, main_node_t *old_main_node, int lev, thread
     {
         goto CLEANUP;
     }
+    PERS_PRINT("compress old gen %d new gen %d", old_main_node->gen, start_gen);
     if (old_main_node->gen != start_gen)
     {
-
+        return;
     }
     DEBUG("compressed main_node %p new main_node %p", old_main_node, new_main_node);
     cnode->marked = 1;
@@ -482,6 +491,10 @@ static void compress(inode_t* inode, main_node_t *old_main_node, int lev, thread
         if (delete_map & (1 << i))
         {
             branch_t* branch = cnode->array[i];
+            if (branch->node.inode.gen != start_gen)
+            {
+                continue;
+            }
             branch->node.inode.marked = 1;
         }
     }
@@ -491,6 +504,10 @@ static void compress(inode_t* inode, main_node_t *old_main_node, int lev, thread
         if (delete_map & (1 << i))
         {
             branch_t* branch = cnode->array[i];
+            if (branch->node.inode.gen != start_gen)
+            {
+                continue;
+            }
             add_to_free_list(thread_args, branch);
             add_to_free_list(thread_args, branch->node.inode.main);
         }
@@ -732,7 +749,7 @@ static int ctrie_lookup(struct ctrie_t* ctrie, int key, thread_args_t* thread_ar
  **/
 static main_node_t* cnode_insert(main_node_t* main_node, int pos, int flag, int key, int value, branch_t** new_branch, int start_gen)
 {
-    DEBUG("inserting %d %d to cnode %p", key, value, main_node);
+    DEBUG("inserting %d %d to cnode %p - gen %d", key, value, main_node, start_gen);
     main_node_t*    new_main_node   = NULL;
     branch_t*       branch          = NULL;
     MALLOC(branch, branch_t);
@@ -1250,12 +1267,27 @@ CLEANUP:
  **/
 static branch_t* copy_to_gen(branch_t* inode, ctrie_t* ctrie, int gen)
 {
+    DEBUG("copy %p to gen %d", inode, gen);
     branch_t* new_inode = NULL;
     MALLOC(new_inode, branch_t);
 
     new_inode->type = INODE;
     new_inode->node.inode.main = gcas_read(&(inode->node.inode), ctrie);
     new_inode->node.inode.gen = gen;
+    return new_inode;
+
+CLEANUP:
+    free_them_all(1, new_inode);
+    return NULL;
+}
+
+static inode_t* copy_to_gen_raw(inode_t* inode, ctrie_t* ctrie, int gen)
+{
+    inode_t* new_inode = NULL;
+    MALLOC(new_inode, inode_t);
+
+    new_inode->main = gcas_read(inode, ctrie);
+    new_inode->gen = gen;
     return new_inode;
 
 CLEANUP:
@@ -1274,6 +1306,7 @@ CLEANUP:
  **/
 static main_node_t* cnode_renew(main_node_t* main_node, int new_gen, ctrie_t * ctrie, thread_args_t* thread_args, int32_t * delete_map)
 {
+    DEBUG("renewing cnode to %d", new_gen);
     int i = 0;
     main_node_t* new_main_node = NULL;
     cnode_t* cnode = &(main_node->node.cnode);
@@ -1416,7 +1449,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             goto DONE;
                         }
                         DEBUG("to contracted 2");
-                        if (gcas(inode, main_node, new_main_node, ctrie))
+                        if (!gcas(inode, main_node, new_main_node, ctrie))
                         {
                             res = RESTART;
                             free(new_main_node);
@@ -1591,6 +1624,22 @@ static inode_t* rdcss_read_root(ctrie_t* ctrie, int abort)
     }
 }
 
+static root_node_t* rdcss_read_root_raw(ctrie_t* ctrie, int abort)
+{
+    root_node_t* root = ctrie->root;
+    switch(root->type)
+    {
+        case INODE:
+            return root;
+        case RDCSS_DESC:
+            rdcss_commit(ctrie, abort);
+            return rdcss_read_root_raw(ctrie, abort);
+        default:
+            DEBUG("WOT");
+            return NULL;
+    }
+}
+
 static inode_t* rdcss_commit(ctrie_t* ctrie, int abort)
 {
     root_node_t* root = ctrie->root;
@@ -1648,4 +1697,45 @@ static inode_t* rdcss_commit(ctrie_t* ctrie, int abort)
     }
 CLEANUP:
     return NULL;
+}
+
+static int rdcss_root(ctrie_t* ctrie, root_node_t* old_inode, main_node_t* expected_main_node, inode_t* new_inode)
+{
+    root_node_t* new_root = NULL;
+    rdcss_desc_t* desc = NULL;
+    MALLOC(new_root, root_node_t);
+    MALLOC(desc, rdcss_desc_t);
+
+    desc->old_inode = old_inode->node.inode;
+    desc->expected_main_node = expected_main_node;
+    desc->new_inode = new_inode;
+    new_root->type = RDCSS_DESC;
+    new_root->node.desc = desc;
+
+    if(CAS(&(ctrie->root), old_inode, new_root))
+    {
+        rdcss_commit(ctrie, 0);
+        return new_root->node.desc->committed;
+    }
+
+CLEANUP:
+    free_them_all(2, new_root, desc);
+    return 0;
+}
+
+static ctrie_t* ctrie_snapshot(ctrie_t* ctrie)
+{
+    while (1)
+    {
+        root_node_t* root = rdcss_read_root_raw(ctrie, 0);
+        main_node_t* expected_main_node = gcas_read(root->node.inode, ctrie);
+        inode_t* new_inode = copy_to_gen_raw(root->node.inode, ctrie, root->node.inode->gen + 1);
+        if (rdcss_root(ctrie, root, expected_main_node, new_inode))
+        {
+            ctrie_t* new_ctrie = create_ctrie();
+            new_ctrie->root = root;
+            // TODO free.
+            return new_ctrie;
+        }
+    }
 }
