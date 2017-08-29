@@ -82,7 +82,7 @@ void lookup_test_thread(lookup_thread_arg_t* lookup_thread_arg)
         PRINT("lookuped %d key=%d ret=%d", i, lookup.key, ret);
         if (ret == NOTFOUND)
         {
-            printf("key: %d not found\n", lookup.key);
+            PERS_PRINT("key: %d not found\n", lookup.key);
         }
     }
     PRINT("out of for");
@@ -469,6 +469,14 @@ int main(int argc, char* argv[])
         PRINT("Usage: %s [<insert|lookup|remove> <action_file>]*", argv[0]);
         return -1;
     }
+    
+    PERS_PRINT("cnode: %d", sizeof(cnode_t));
+    PERS_PRINT("inode: %d", sizeof(inode_t));
+    PERS_PRINT("tnode: %d", sizeof(tnode_t));
+    PERS_PRINT("lnode: %d", sizeof(lnode_t));
+    PERS_PRINT("snode: %d", sizeof(snode_t));
+    PERS_PRINT("main_node: %d", sizeof(main_node_t));
+    PERS_PRINT("branch: %d", sizeof(branch_t));
 
     PERS_PRINT("Start");
     PERS_PRINT("Setting up %d threads", NUM_OF_THREADS);

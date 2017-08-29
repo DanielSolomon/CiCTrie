@@ -400,7 +400,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         {
             branch_t* curr_branch = cnode->array[i];
             PLACE_TMP_HP(thread_args, curr_branch);
-            if (cnode->marked)
+            if (cnode->marked || cnode->array[i] != curr_branch)
             {
                 DEBUG("Failed compress: m: %d !=: %d", cnode->marked, cnode->array[i] != curr_branch);
                 goto CLEANUP;
@@ -430,6 +430,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
     branch_t* old_branch = NULL;
     if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
     {
+        PERS_PRINT("REAL SHEET");
         // clean is a best effort, if we fail, we clean and return.
         goto CLEANUP;
     }
