@@ -454,8 +454,8 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         if (delete_map & (1 << i))
         {
             branch_t* branch = cnode->array[i];
-            add_to_free_list(thread_args, branch);
             add_to_free_list(thread_args, branch->node.inode.main);
+            add_to_free_list(thread_args, branch);
         }
     }
     add_to_free_list(thread_args, old_main_node);
@@ -1045,6 +1045,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             if (CAS(&(inode->main), main_node, new_main_node))
             {
                 lnode_t* ptr = main_node->node.lnode.next;
+                lnode_t* tmp = NULL;
                 while (ptr != NULL)
                 {
                     ptr->marked = 1;
@@ -1054,8 +1055,9 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 ptr = main_node->node.lnode.next;
                 while (ptr != NULL)
                 {
+                    tmp = ptr->next;
                     add_to_free_list(thread_args, ptr);
-                    ptr = ptr->next;
+                    ptr = tmp;
                 }
                 add_to_free_list(thread_args, main_node);
                 return OK;
@@ -1248,6 +1250,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                 if (CAS(&(inode->main), main_node, new_main_node))
                 {
                     lnode_t* ptr = main_node->node.lnode.next;
+                    lnode_t* tmp = NULL;
                     while (ptr != NULL)
                     {
                         ptr->marked = 1;
@@ -1257,8 +1260,9 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                     ptr = main_node->node.lnode.next;
                     while (ptr != NULL)
                     {
+                        tmp = ptr->next;
                         add_to_free_list(thread_args, ptr);
-                        ptr = ptr->next;
+                        ptr = tmp;
                     }
                     add_to_free_list(thread_args, main_node);
                     return old_value;
