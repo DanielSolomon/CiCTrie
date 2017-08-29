@@ -157,7 +157,7 @@ void add_to_free_list(thread_args_t* thread_args, void* arg)
 
     while ((free_list->length == FREE_LIST_SIZE) && (scan(thread_args) == 0))
     {
-        DEBUG("sleeping! free_list length is %d, FREE_LIST_SIZE is %d", free_list->length, FREE_LIST_SIZE);
+        PERS_PRINT("sleeping! free_list length is %d, FREE_LIST_SIZE is %d", free_list->length, FREE_LIST_SIZE);
         sleep(1);
     }
     free_list->free_list[free_list->length] = arg;

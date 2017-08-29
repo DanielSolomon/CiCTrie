@@ -1225,20 +1225,6 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                     break;
             }
         DONE:
-            if (res == NOTFOUND || res == RESTART)
-            {
-                return res;
-            }
-            main_node_t* tmp = inode->main;
-            PLACE_TMP_HP(thread_args, tmp);
-            if (inode->marked || inode->main != tmp)
-            {
-                return res;
-            }
-            if (tmp->type == TNODE)
-            {
-                clean_parent(parent, inode, hash(key), lev - W, thread_args);
-            }
             return res;
         }
         case TNODE:
