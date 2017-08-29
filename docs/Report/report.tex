@@ -1,0 +1,87 @@
+
+
+\documentclass[conference]{IEEEtran}
+\usepackage{blindtext, cite, graphicx, url}
+
+
+
+% correct bad hyphenation here
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+
+\begin{document}
+%
+% paper title
+% can use linebreaks \\ within to get better formatting as desired
+\title{CiCTrie - C Implementation of CTrie}
+
+% author names and affiliations
+% use a multiple column layout for up to three different
+% affiliations
+\author{\IEEEauthorblockN{Daniel Solomon}
+\IEEEauthorblockA{ID: \\
+Email: DanielSolomon94.ds@gmail.com}
+\and
+\IEEEauthorblockN{Or Karni}
+\IEEEauthorblockA{ID: \\
+Email: }}
+
+% make the title area
+\maketitle
+
+
+\begin{abstract}
+	We ported high-level memory managed data structure \textit{CTrie} to an unmanaged language \textit{C}, using \textit{hazard pointers} mechanism, while keeping the basic operations of the data structure. We compared our implementation against Scala's standard library \textit{TrieMap} (\textit{CTrie}) using similar tests as in the original article.
+\end{abstract}
+
+\begin{IEEEkeywords}
+	CTrie, Hazard Pointers.
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+
+\section{Introduction}
+		\textbf{CTrie}\cite{article}\cite{wiki-ctrie} (or concurrent hash-trie) is a concurrent \textit{thread-safe}, \textit{lock-free} implementation of a hash array mapped trie. This data structure is consists of \textit{key-value} pairs and it supports the following operations:
+		\begin{itemize}
+			\item \textbf{insert}: add a new \textit{(key, value)} pair.
+			\item \textbf{remove}: remove a \textit{(key, value)} pair if it exists.
+			\item \textbf{lookup}: find the \textit{value} (if any) for a specific \textit{key}. 
+		\end{itemize}
+		In addition the \textbf{CTrie} data structure has a \textit{snapshot} operation which is used to implement consistent \textit{iterators}. In fact \textbf{CTrie} is the first known concurrent data structure that supports \textit{O(1)}, \textit{atomic}, \textit{lock-free} snapshots.\\
+		\textbf{CTrie} aspires to preserve the space-efficiency and the expected depth of hash tries by \textit{compressing} after removals, disposing of unnecessary nodes and thus keeping the depth reasonable.\\
+		The \textbf{CTrie} implementation is based on single-word \textit{compare-and-swap} instructions. 
+
+\section{Implementation}
+	
+	We wanted to give a simple interface for using \textit{CiCTrie} which will be as close  as possible to object oriented programming, therefore we used \textit{Object Oriented C}; The user creates a \textit{ctrie\_t*} struct using a "constructor" \textit{create\_ctrie} and use its functions passing itself as a "self object" (such as: \texttt{ctrie->insert(\textbf{ctrie}, key, value)}). \\
+	This way we could port easily the original \textit{Scala} code from the original paper \cite{article} and from the source code of the standard library itself \cite{ctrie-scala-source-code}. \\
+	
+\subsection{Basic Operations}
+	Some explanations about the general commands...
+	
+\subsection{Memory Reclamation}
+	\textit{Hazard pointers} are a mechanism which aims to solve the ABA and safe memory reclamation problems\cite{hazard}\cite{wiki-hazard}. Each thread maintains a list of \textit{hazard pointers} to resources it currently uses. This list usually has a fixed size and is kept small. A used resource may not be freed or modified.\\
+	In our implementation, each thread has 6 \textit{hazard pointers} in total - 4 "trie" \textit{hazard pointers} and 2 "list" \textit{hazard pointers}. 6 \textit{hazard pointers} are needed because in the worst case we reference 4 nodes (a parent \textit{INode}, it's \textit{CNode} child, a child \textit{Inode} it's \textit{MainNode}). Then, we must be able to iterate over a \textit{LNode} linked list, which requires 2 \textit{hazard pointers}.
+	% TODO phrasing %
+	Before using 
+	
+\subsection{Snapshot}
+	:/...
+
+\section{Benchmarking}
+	Fun, fun, fun, fun, fun...
+
+\begin{thebibliography}{1}
+
+	\bibitem{article} Original article representing \textbf{CTrie} - \url{https://axel22.github.io/resources/docs/ctries-snapshot.pdf}. 
+	\bibitem{wiki-ctrie} \textbf{CTrie} wikipedia reference - \url{https://en.wikipedia.org/wiki/Ctrie}.
+	\bibitem{hazard} Original article of hazard pointers - 
+	\url{https://www.research.ibm.com/people/m/michael/ieeetpds-2004.pdf}
+	\bibitem{wiki-hazard} Hazard pointers wikipedia reference - \url{https://en.wikipedia.org/wiki/Hazard_pointer}.
+	\bibitem{ctrie-scala-source-code} \textbf{TrieMap Scala source code - } \url{https://www.scala-lang.org/api/current/scala/collection/concurrent/TrieMap.html}.
+\end{thebibliography}
+
+% that's all folks
+\end{document}
+
+
