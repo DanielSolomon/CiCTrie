@@ -130,18 +130,18 @@ def plot_graph(s, c, title):
             save        = '{}.png'.format(title),
         )
 
-def main(scala_path, c_path):
+def main(subtitle, scala_path, c_path):
     print('scala')
     scala_i, scala_l, scala_r, scala_a  = [postprocess_dict(x) if x else [] for x in scala_to_dicts(scala_path)]
     print('c')
     c_i, c_l, c_r, c_a                  = [postprocess_dict(x) if x else [] for x in c_to_dicts(c_path)]
-    plot_graph(scala_i, c_i, 'insert')
-    plot_graph(scala_l, c_l, 'lookup')
-    plot_graph(scala_r, c_r, 'remove')
-    plot_graph(scala_a, c_a, 'action')
+    plot_graph(scala_i, c_i, 'insert ({})'.format(subtitle))
+    plot_graph(scala_l, c_l, 'lookup ({})'.format(subtitle))
+    plot_graph(scala_r, c_r, 'remove ({})'.format(subtitle))
+    plot_graph(scala_a, c_a, 'action ({})'.format(subtitle))
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        print('Usage: {} <scala-file> <c-dir>'.format(sys.argv[0]))
+    if len(sys.argv) != 4:
+        print('Usage: {} <subtitle> <scala-file> <c-dir>'.format(sys.argv[0]))
         sys.exit(1)
     main(*sys.argv[1:])
