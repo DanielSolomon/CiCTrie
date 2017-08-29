@@ -1218,7 +1218,9 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                         FENCE;
                         add_to_free_list(thread_args, branch);
                         add_to_free_list(thread_args, main_node);
+                        return res;
                     }
+                    break;
                 default:
                     break;
             }
@@ -1227,7 +1229,13 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             {
                 return res;
             }
-            if (main_node->type == TNODE)
+            main_node_t* tmp = inode->main;
+            PLACE_TMP_HP(thread_args, tmp);
+            if (inode->marked || inode->main != tmp)
+            {
+                return res;
+            }
+            if (tmp->type == TNODE)
             {
                 clean_parent(parent, inode, hash(key), lev - W, thread_args);
             }
