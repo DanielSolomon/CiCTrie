@@ -1046,6 +1046,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             {
                 lnode_t* ptr = main_node->node.lnode.next;
                 lnode_t* tmp = NULL;
+                main_node->node.lnode.marked = 1;
                 while (ptr != NULL)
                 {
                     ptr->marked = 1;
@@ -1251,6 +1252,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                 {
                     lnode_t* ptr = main_node->node.lnode.next;
                     lnode_t* tmp = NULL;
+                    main_node->node.lnode.marked = 1;
                     while (ptr != NULL)
                     {
                         ptr->marked = 1;
