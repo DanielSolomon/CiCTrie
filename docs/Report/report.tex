@@ -1,4 +1,4 @@
-
+% !TeX spellcheck = en_US
 
 \documentclass[conference]{IEEEtran}
 \usepackage{blindtext, cite, graphicx, url}
@@ -24,7 +24,7 @@ Email: DanielSolomon94.ds@gmail.com}
 \and
 \IEEEauthorblockN{Or Karni}
 \IEEEauthorblockA{ID: \\
-Email: }}
+Email: orkarni@mail.tau.ac.il}}
 
 % make the title area
 \maketitle
@@ -61,9 +61,13 @@ Email: }}
 	
 \subsection{Memory Reclamation}
 	\textit{Hazard pointers} are a mechanism which aims to solve the ABA and safe memory reclamation problems\cite{hazard}\cite{wiki-hazard}. Each thread maintains a list of \textit{hazard pointers} to resources it currently uses. This list usually has a fixed size and is kept small. A used resource may not be freed or modified.\\
-	In our implementation, each thread has 6 \textit{hazard pointers} in total - 4 "trie" \textit{hazard pointers} and 2 "list" \textit{hazard pointers}. 6 \textit{hazard pointers} are needed because in the worst case we reference 4 nodes (a parent \textit{INode}, it's \textit{CNode} child, a child \textit{Inode} it's \textit{MainNode}). Then, we must be able to iterate over a \textit{LNode} linked list, which requires 2 \textit{hazard pointers}.
+	In our implementation, each thread has 6 \textit{hazard pointers} in total - 4 "trie" \textit{hazard pointers} and 2 "list" \textit{hazard pointers}. 6 \textit{hazard pointers} are needed because in the worst case we reference 4 nodes (a parent \textit{INode}, it's \textit{CNode} child, a child \textit{Inode} it's \textit{MainNode}). Then, we must be able to iterate over a \textit{LNode} linked list, which requires 2 \textit{hazard pointers}. \\
 	% TODO phrasing %
-	Before using 
+	Before accessing anything, a thread must first place a \textit{hazard pointer} to ensure no one will free the desired memory. However, \textit{hazard pointers} by themselves don't guarantee success. For example, if a thread reaches an \textit{INode} and wishes to continue down to it's \textit{MainNode}, it reads the pointer to the \textit{MainNode}, places a \textit{hazard pointer} and then accesses the node. But what if between the read and the placement of the \textit{hazard pointer}, another thread changes the \textit{CTrie} and frees the \textit{MainNode}? The original thread would place a \textit{hazard pointer} on an invalid address and wouldn't know it's already freed. To solve this problem, we added a \textit{marked} field to \textit{INode}, \textit{LNode} and \textit{CNode}. The marked field indicates that this node has been removed from the \textit{CTrie} and is scheduled for freeing. In places where a race might occur, the accessing thread must validate it's state after placing a \textit{hazard pointer}. In the example above, the thread must validate that:
+	\begin{enumerate}
+		\item The \textit{INode} isn't marked.
+		\item The \textit{Inode} still points to the expected \textit{MainNode}.		
+	\end{enumerate}
 	
 \subsection{Snapshot}
 	:/...
