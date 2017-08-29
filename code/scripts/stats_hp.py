@@ -80,8 +80,8 @@ def postprocess_dict(d):
 def plot_graph(c1, c2, title):
     if c1 and c2:
         plot(
-            xs          = [[x.threads for x in s], [x.threads for x in c]],
-            ys          = [[x.avg for x in s], [x.avg for x in c]],
+            xs          = [[x.threads for x in c1], [x.threads for x in c2]],
+            ys          = [[x.avg for x in c1], [x.avg for x in c2]],
             colors      = ['bs-', 'rs-'],
             x_label     = '#threads', 
             y_label     = 'nano seconds', 
