@@ -67,9 +67,9 @@ static main_node_t* cnode_renew(main_node_t* main_node, int new_gen, ctrie_t * c
  * LNode functions *
  *******************/
 
-static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args);
-static int lnode_copy  (main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args);
-static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args);
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args, int start_gen);
+static int lnode_copy  (main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args, int start_gen);
+static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args, int start_gen);
 static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
 
 /*********
@@ -98,7 +98,7 @@ static int rdcss_root(ctrie_t* ctrie, root_node_t* old_inode, main_node_t* expec
  *******************/
 
 #define CAS(ptr, old, new) __sync_bool_compare_and_swap(ptr, old, new)
-#define CAS_OR_RESTART(inode, old, new, ctrie, msg, thread_args, new_branch) do {   \
+#define CAS_OR_RESTART(inode, old, new, ctrie, msg, thread_args, new_branch, old_branch) do {   \
     if (new == NULL)                                \
         FAIL(msg);                                  \
     if (gcas(inode, old, new, ctrie))               \
@@ -106,9 +106,13 @@ static int rdcss_root(ctrie_t* ctrie, root_node_t* old_inode, main_node_t* expec
         DEBUG("CASed old %p and new %p", old, new); \
         if (new->gen == old->gen) \
         {\
-        old->node.cnode.marked = 1;                 \
-        FENCE;                                      \
-        add_to_free_list(thread_args, old);         \
+            old->node.cnode.marked = 1;                 \
+            FENCE;                                      \
+            add_to_free_list(thread_args, old);         \
+            if (old_branch != NULL)                     \
+            {\
+                add_to_free_list(thread_args, old_branch); \
+            }\
         }\
     }                                               \
     else                                            \
@@ -598,7 +602,10 @@ static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev,
 
             add_to_free_list(thread_args, parent_main_node);
             add_to_free_list(thread_args, branch);
-            add_to_free_list(thread_args, main_node);
+            if (main_node->gen == start_gen)
+            {
+                add_to_free_list(thread_args, main_node);
+            }
             if (old_branch != NULL)
             {
                 add_to_free_list(thread_args, old_branch);
@@ -902,12 +909,13 @@ CLEANUP:
  * @param snode: the new snode to be inserted.
  * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
  * @param thread_args: the thread arguments.
+ * @param start_gen: the generation of the ctrie.
  * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  **/
-static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args, int start_gen)
 {
     lnode_t* next   = NULL;
-    int res = lnode_copy(main_node, new_main_node, thread_args);
+    int res = lnode_copy(main_node, new_main_node, thread_args, start_gen);
     if (res != OK)
     {
         return res;
@@ -933,9 +941,10 @@ CLEANUP:
  * @param main_node: the main node which contains the lnode.
  * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
  * @param thread_args: the thread arguments.
+ * @param start_gen: the generation of the ctrie.
  * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  */
-static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args, int start_gen)
 {
     int res = FAILED;
     *new_main_node = NULL;
@@ -947,6 +956,7 @@ static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, threa
     }
 
     (*new_main_node)->type = LNODE;
+    (*new_main_node)->gen = start_gen;
     lnode_t* new_lnode  = &((*new_main_node)->node.lnode);
     lnode_t* old_lnode  = &(main_node->node.lnode);
     new_lnode->snode    = old_lnode->snode;
@@ -985,9 +995,10 @@ CLEANUP:
  * @param new_main_node: an out paramter that is set to the new lnode wrapped by a main node.
  * @param value: an out parameter that is set to `key`'s value if it is removed.
  * @param thread_args: the thread arguments.
+ * @param start_gen: the generation of the ctrie.
  * @return Returns OK if successful, FAILED if an error occurred or NOTFOUND if the key wasn't found.
  **/
-static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args)
+static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args, int start_gen)
 {
     *new_main_node = NULL;
     int res = FAILED;
@@ -997,7 +1008,7 @@ static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_
         FAIL("Expected lnode, got %d", main_node->type);
     }
 
-    res = lnode_copy(main_node, new_main_node, thread_args);
+    res = lnode_copy(main_node, new_main_node, thread_args, start_gen);
     if (res != OK)
     {
         return res;
@@ -1087,7 +1098,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             branch_t* new_branch = NULL;
             // TODO renew here?
             main_node_t* new_main_node = cnode_insert(main_node, pos, flag, key, value, &new_branch, start_gen);
-            CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to insert into cnode", thread_args, new_branch);
+            CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to insert into cnode", thread_args, new_branch, NULL);
             //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
             return OK;
         }
@@ -1134,8 +1145,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             {
                 branch_t* new_branch = NULL;
                 main_node_t* new_main_node = cnode_update(main_node, pos, key, value, &new_branch, start_gen);
-                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode", thread_args, new_branch);
-                add_to_free_list(thread_args, branch);
+                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode", thread_args, new_branch, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
@@ -1149,8 +1159,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
                 }
                 // TODO renew here?
                 main_node_t* new_main_node = cnode_update_branch(main_node, pos, child, start_gen);
-                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode branch", thread_args, child);
-                add_to_free_list(thread_args, branch);
+                CAS_OR_RESTART(inode, main_node, new_main_node, ctrie, "Failed to update cnode branch", thread_args, child, branch);
                 //DEBUG("inode %p key %d bmp %x length %d", inode, key, new_main_node->node.cnode.bmp, new_main_node->node.cnode.length);
                 return OK;
             }
@@ -1165,7 +1174,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
     {
         snode_t new_snode = { .key = key, .value = value };
         main_node_t* new_main_node = NULL;
-        int res = lnode_insert(main_node, &new_snode, &new_main_node, thread_args);
+        int res = lnode_insert(main_node, &new_snode, &new_main_node, thread_args, start_gen);
         if (res == OK)
         {
             if (NULL == new_main_node)
@@ -1174,6 +1183,10 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
             }
             if (gcas(inode, main_node, new_main_node, ctrie))
             {
+                if (main_node->gen != new_main_node->gen)
+                {
+                    return OK;
+                }
                 lnode_t* ptr = main_node->node.lnode.next;
                 while (ptr != NULL)
                 {
@@ -1455,14 +1468,17 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             free(new_main_node);
                             goto DONE;
                         }
-                        if (old_branch != NULL)
+                        if (main_node->gen == new_main_node->gen)
                         {
-                            add_to_free_list(thread_args, old_branch);
+                            if (old_branch != NULL)
+                            {
+                                add_to_free_list(thread_args, old_branch);
+                            }
+                            main_node->node.cnode.marked = 1;
+                            FENCE;
+                            add_to_free_list(thread_args, branch);
+                            add_to_free_list(thread_args, main_node);
                         }
-                        main_node->node.cnode.marked = 1;
-                        FENCE;
-                        add_to_free_list(thread_args, branch);
-                        add_to_free_list(thread_args, main_node);
                     }
                 default:
                     break;
@@ -1485,7 +1501,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
         {
             int old_value = 0;
             main_node_t* new_main_node = NULL;
-            int res = lnode_remove(main_node, key, &new_main_node, &old_value, thread_args);
+            int res = lnode_remove(main_node, key, &new_main_node, &old_value, thread_args, start_gen);
             switch (res)
             {
             case NOTFOUND:
@@ -1495,6 +1511,10 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             case OK:
                 if (gcas(inode, main_node, new_main_node, ctrie))
                 {
+                    if (main_node->gen != new_main_node->gen)
+                    {
+                        return old_value;
+                    }
                     lnode_t* ptr = main_node->node.lnode.next;
                     while (ptr != NULL)
                     {
