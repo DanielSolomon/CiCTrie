@@ -43,7 +43,7 @@ class LookupOp[Key, Value] (key:Key, pad:Value = 0) extends Op[Key, Value] {
             //println("got " + value + " for " + key)
         } 
         catch {
-        case e : Exception => println("got exception for " + key)
+	    case _ : Throwable => 
         }
     }
 }
@@ -55,7 +55,7 @@ class RemoveOp[Key, Value] (key:Key, pad:Value = 0) extends Op[Key, Value] {
             //println("removed " + key)
         } 
         catch {
-        case e : Exception => println("got exception for " + key)
+	    case _ : Throwable =>
         }
     }
 }
@@ -163,7 +163,6 @@ object Main {
         val size = wrapper.getInt
         Arrays.actions = new Array[Op[MyInt, Int]](size)
         for (i <- 0 until size) {
-            val key = new MyInt(wrapper.getInt)
             Arrays.actions(i) = wrapper.getInt match {
                 case Constants.INSERT_TYPE => new InsertOp[MyInt, Int](new MyInt(wrapper.getInt), wrapper.getInt)
                 case Constants.LOOKUP_TYPE => new LookupOp[MyInt, Int](new MyInt(wrapper.getInt), wrapper.getInt)
