@@ -470,14 +470,6 @@ int main(int argc, char* argv[])
         return -1;
     }
     
-    PERS_PRINT("cnode: %d", sizeof(cnode_t));
-    PERS_PRINT("inode: %d", sizeof(inode_t));
-    PERS_PRINT("tnode: %d", sizeof(tnode_t));
-    PERS_PRINT("lnode: %d", sizeof(lnode_t));
-    PERS_PRINT("snode: %d", sizeof(snode_t));
-    PERS_PRINT("main_node: %d", sizeof(main_node_t));
-    PERS_PRINT("branch: %d", sizeof(branch_t));
-
     PERS_PRINT("Start");
     PERS_PRINT("Setting up %d threads", NUM_OF_THREADS);
 
