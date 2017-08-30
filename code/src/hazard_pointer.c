@@ -36,7 +36,7 @@ void place_hazard_pointer(hp_list_t* hp_list, void* arg)
 
 void place_list_hazard_pointer(hp_list_t* hp_list, void* arg)
 {
-    hp_list->hazard_pointers[(hp_list->next_list_hp + hp_list->next_hp) % MAX_HAZARD_POINTERS] = arg;
+    hp_list->list_hazard_pointers[hp_list->next_list_hp] = arg;
     hp_list->next_list_hp++;
     if (hp_list->next_list_hp == MAX_LIST_HAZARD_POINTERS)
     {
@@ -86,8 +86,11 @@ static void** prepare_hazard_pointers(thread_args_t* thread_args)
             hazard_pointers[j] = thread_args->hp_lists[i]->hazard_pointers[k];
             j++;
         }
-        hazard_pointers[j] = thread_args->hp_lists[i]->temp_hp;
-        j++;
+        for (k = 0; k < MAX_LIST_HAZARD_POINTERS; k++)
+        {
+            hazard_pointers[j] = thread_args->hp_lists[i]->list_hazard_pointers[k];
+            j++;
+        }
     }
 
     qsort(hazard_pointers, TOTAL_HAZARD_POINTERS(thread_args), sizeof(void*), compare);     
@@ -168,5 +171,8 @@ void release_hazard_pointers(hp_list_t* hp_list)
     {
         hp_list->hazard_pointers[i] = NULL;
     }
-    hp_list->temp_hp = NULL;
+    for (i = 0; i < MAX_LIST_HAZARD_POINTERS; i++)
+    {
+        hp_list->list_hazard_pointers[i] = NULL;
+    }
 }

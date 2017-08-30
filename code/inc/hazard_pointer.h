@@ -2,21 +2,20 @@
 
 #define MAX_HAZARD_POINTERS                 (4)
 #define MAX_LIST_HAZARD_POINTERS            (2)
-// Another hazard pointer for TEMP hazard pointer.
-#define NUM_OF_HAZARD_POINTERS              (MAX_HAZARD_POINTERS + 1)
+#define NUM_OF_HAZARD_POINTERS              (MAX_HAZARD_POINTERS + MAX_LIST_HAZARD_POINTERS)
 #define TOTAL_HAZARD_POINTERS(thread_args)  (thread_args->num_of_threads * NUM_OF_HAZARD_POINTERS)
 #define FREE_LIST_SIZE                      (NUM_OF_THREADS * NUM_OF_HAZARD_POINTERS)
 #define FENCE                               do {__sync_synchronize();} while(0)
 #define PLACE_HP(thread_args, arg)          place_hazard_pointer((thread_args)->hp_lists[(thread_args)->index], arg)
 #define PLACE_LIST_HP(thread_args, arg)     place_list_hazard_pointer((thread_args)->hp_lists[(thread_args)->index], arg)
-#define PLACE_TMP_HP(thread_args, arg)      do { (thread_args)->hp_lists[(thread_args)->index]->temp_hp = (arg); } while(0)
+#define PLACE_TMP_HP(thread_args, arg)      PLACE_LIST_HP(thread_args, arg)
 #define REPLACE_LAST_HP(thread_args, arg)   replace_last_hazard_pointer((thread_args)->hp_lists[(thread_args)->index], arg)
 
 typedef struct {
     void*   hazard_pointers[MAX_HAZARD_POINTERS];
     int     next_hp;
+    void*   list_hazard_pointers[MAX_LIST_HAZARD_POINTERS];
     int     next_list_hp;
-    void*   temp_hp;
 } hp_list_t;
 
 typedef struct {
