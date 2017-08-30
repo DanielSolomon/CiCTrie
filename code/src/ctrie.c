@@ -32,9 +32,9 @@ static void main_node_free(main_node_t* main_node);
  * Clean functions *
  *******************/
 
-static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
-static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
-static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
+static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args, int pair);
+static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int pair);
+static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args, int pair);
 
 /*******************
  * Death functions *
@@ -64,10 +64,10 @@ static main_node_t* cnode_remove(main_node_t* main_node, int pos, int flag);
  * LNode functions *
  *******************/
 
-static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args);
-static int lnode_copy  (main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args);
-static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args);
-static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args);
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args, int pair);
+static int lnode_copy  (main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args, int pair);
+static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args, int pair);
+static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args, int pair);
 
 /*********
  * Other *
@@ -274,7 +274,7 @@ static void ctrie_free(ctrie_t* ctrie)
  * @param thread_args: the thread arguments.
  * @return if key is found returns the related value, returns RESTART if some race occurred, otherwise returns NOTFOUND.
  **/
-static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
+static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args, int pair)
 {
     lnode_t* ptr = lnode;
     while (ptr != NULL)
@@ -283,7 +283,7 @@ static int lnode_lookup(lnode_t* lnode, int key, thread_args_t* thread_args)
         {
             return ptr->snode.value;
         }
-        PLACE_LIST_HP(thread_args, ptr->next);
+        PLACE_HP(thread_args, ptr->next, pair);
         if (ptr->marked)
         {
             return RESTART;
@@ -346,7 +346,7 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return RESTART if a race occured, otherwise returns OK.
  **/
-static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args)
+static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args, int pair)
 {
     *old_branch = NULL;
     if (main_node->type != CNODE)
@@ -358,7 +358,7 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
     {
         int index = highest_on_bit(cnode->bmp);
         branch_t* branch = cnode->array[index];
-        REPLACE_LAST_HP(thread_args, branch);
+        PLACE_HP(thread_args, branch, pair);
         if (cnode->marked || cnode->array[index] != branch)
         {
             return RESTART;
@@ -382,7 +382,7 @@ static int to_contracted(main_node_t* main_node, int lev, branch_t** old_branch,
  * @param lev: hash level.
  * @param thread_args: the thread arguments.
  **/
-static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args)
+static void compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args, int pair)
 {
     main_node_t* new_main_node  = NULL;
     int32_t      delete_map     = 0;
@@ -398,7 +398,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         if (cnode->bmp & (1 << i))
         {
             branch_t* curr_branch = cnode->array[i];
-            PLACE_TMP_HP(thread_args, curr_branch);
+            PLACE_HP(thread_args, curr_branch, pair);
             if (cnode->marked || cnode->array[i] != curr_branch)
             {
                 DEBUG("Failed compress: m: %d !=: %d", cnode->marked, cnode->array[i] != curr_branch);
@@ -409,7 +409,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
                 inode_t*     tmp_inode      = &(curr_branch->node.inode);
                 main_node_t* tmp_main_node  = tmp_inode->main;
                 DEBUG("Replacing branch %p - main_node %p", curr_branch, tmp_main_node);
-                PLACE_TMP_HP(thread_args, tmp_main_node);
+                PLACE_HP(thread_args, tmp_main_node, pair);
                 // TODO accessing tmp_inode after replacing HP.
                 if (tmp_inode->marked || tmp_inode->main != tmp_main_node)
                 {
@@ -427,7 +427,7 @@ static void compress(main_node_t **cas_address, main_node_t *old_main_node, int 
         }
     }
     branch_t* old_branch = NULL;
-    if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
+    if (to_contracted(new_main_node, lev, &old_branch, thread_args, pair) == RESTART)
     {
         PERS_PRINT("REAL SHEET");
         // clean is a best effort, if we fail, we clean and return.
@@ -476,13 +476,13 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @note Assumes that inode and inode->main are protected with HP.
  **/
-static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
+static void clean(inode_t* inode, int lev, thread_args_t* thread_args, int pair)
 {
     DEBUG("cleaning inode %p", inode);
     main_node_t* old_main_node = inode->main;
     if (inode->main->type == CNODE)
     {
-        compress(&(inode->main), old_main_node, lev, thread_args);
+        compress(&(inode->main), old_main_node, lev, thread_args, pair);
     }
 }
 
@@ -504,7 +504,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         return NOTFOUND;
     }
 
-    PLACE_HP(thread_args, main_node);
+    PLACE_HP(thread_args, main_node, lev & 1);
     if (inode->marked || inode->main != main_node)
     {
         return RESTART;
@@ -527,7 +527,7 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
             return NOTFOUND;
         }
         branch = main_node->node.cnode.array[pos];
-        PLACE_HP(thread_args, branch);
+        PLACE_HP(thread_args, branch, 1 - (lev & 1));
         if (main_node->node.cnode.marked || main_node->node.cnode.array[pos] != branch)
         {
             return RESTART;
@@ -549,11 +549,11 @@ static int internal_lookup(inode_t* inode, int key, int lev, inode_t* parent, th
         }
     case TNODE:
         // TNode - help resurrect it and restart.
-        clean(parent, lev - W, thread_args);
+        clean(parent, lev - W, thread_args, lev & 1);
         return RESTART;
     case LNODE:
         // LNode - search the linked list.
-        return lnode_lookup(&(main_node->node.lnode), key, thread_args);
+        return lnode_lookup(&(main_node->node.lnode), key, thread_args, 1 - (lev & 1));
     default:
         return NOTFOUND;
     }
@@ -739,10 +739,10 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  **/
-static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_insert(main_node_t* main_node, snode_t* snode, main_node_t** new_main_node, thread_args_t* thread_args, int pair)
 {
     lnode_t* next   = NULL;
-    int res = lnode_copy(main_node, new_main_node, thread_args);
+    int res = lnode_copy(main_node, new_main_node, thread_args, pair);
     if (res != OK)
     {
         return res;
@@ -770,7 +770,7 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return OK is returned on success, RESTART if a race occurred and FAILED is returned otherwise.
  */
-static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args)
+static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, thread_args_t* thread_args, int pair)
 {
     int res = FAILED;
     *new_main_node = NULL;
@@ -789,7 +789,7 @@ static int lnode_copy(main_node_t* main_node, main_node_t** new_main_node, threa
 
     while (old_lnode->next)
     {
-        PLACE_LIST_HP(thread_args, old_lnode->next);
+        PLACE_HP(thread_args, old_lnode->next, pair);
         if (old_lnode->marked)
         {
             res = RESTART;
@@ -822,7 +822,7 @@ CLEANUP:
  * @param thread_args: the thread arguments.
  * @return Returns OK if successful, FAILED if an error occurred or NOTFOUND if the key wasn't found.
  **/
-static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args)
+static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_node, int* value, thread_args_t* thread_args, int pair)
 {
     *new_main_node = NULL;
     int res = FAILED;
@@ -832,7 +832,7 @@ static int lnode_remove(main_node_t* main_node, int key, main_node_t** new_main_
         FAIL("Expected lnode, got %d", main_node->type);
     }
 
-    res = lnode_copy(main_node, new_main_node, thread_args);
+    res = lnode_copy(main_node, new_main_node, thread_args, pair);
     if (res != OK)
     {
         return res;
@@ -903,7 +903,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
     branch_t*    branch     = NULL;
     branch_t*    child      = NULL;
 
-    PLACE_HP(thread_args, main_node);
+    PLACE_HP(thread_args, main_node, lev & 1);
     if (inode->marked || inode->main != main_node)
     {
         return RESTART;
@@ -927,7 +927,7 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         }
         // Check the branch.
         branch = main_node->node.cnode.array[pos];
-        PLACE_HP(thread_args, branch);
+        PLACE_HP(thread_args, branch, 1 - (lev & 1));
         if (main_node->node.cnode.marked || main_node->node.cnode.array[pos] != branch)
         {
             return RESTART;
@@ -966,13 +966,13 @@ static int internal_insert(inode_t* inode, int key, int value, int lev, inode_t*
         }
         break;
     case TNODE:
-        clean(parent, lev - W, thread_args);
+        clean(parent, lev - W, thread_args, lev & 1);
         break;
     case LNODE:
     {
         snode_t new_snode = { .key = key, .value = value };
         main_node_t* new_main_node = NULL;
-        int res = lnode_insert(main_node, &new_snode, &new_main_node, thread_args);
+        int res = lnode_insert(main_node, &new_snode, &new_main_node, thread_args, 1 - (lev & 1));
         if (res == OK)
         {
             if (NULL == new_main_node)
@@ -1086,7 +1086,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
     int          flag       = 0;
     branch_t*    branch     = NULL;
 
-    PLACE_HP(thread_args, main_node);
+    PLACE_HP(thread_args, main_node, lev & 1);
     if (inode->marked || inode->main != main_node)
     {
         return RESTART;
@@ -1109,7 +1109,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             }
             // Check the branch.
             branch = main_node->node.cnode.array[pos];
-            PLACE_HP(thread_args, branch);
+            PLACE_HP(thread_args, branch, 1 - (lev & 1));
             if (main_node->node.cnode.marked || main_node->node.cnode.array[pos] != branch)
             {
                 return RESTART;
@@ -1134,7 +1134,7 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
                             FAIL("Failed to remove %d from cnode", key);
                         }
                         branch_t* old_branch = NULL;
-                        if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
+                        if (to_contracted(new_main_node, lev, &old_branch, thread_args, 1 - (lev & 1)) == RESTART)
                         {
                             res = RESTART;
                             free(new_main_node);
@@ -1165,13 +1165,13 @@ static int internal_remove(inode_t* inode, int key, int lev, inode_t* parent, th
             return res;
         }
         case TNODE:
-            clean(parent, lev - W, thread_args);
+            clean(parent, lev - W, thread_args, lev & 1);
             return RESTART;
         case LNODE:
         {
             int old_value = 0;
             main_node_t* new_main_node = NULL;
-            int res = lnode_remove(main_node, key, &new_main_node, &old_value, thread_args);
+            int res = lnode_remove(main_node, key, &new_main_node, &old_value, thread_args, 1 - (lev & 1));
             switch (res)
             {
             case NOTFOUND:

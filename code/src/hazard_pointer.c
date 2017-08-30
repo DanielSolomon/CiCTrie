@@ -3,45 +3,11 @@
 #include "hazard_pointer.h"
 #include "common.h"
 
-void replace_last_hazard_pointer(hp_list_t* hp_list, void* arg)
+void place_hazard_pointer(hp_list_t* hp_list, void* arg, int pair)
 {
-    if (hp_list->next_hp == 0)
-    {
-        hp_list->next_hp = MAX_HAZARD_POINTERS - 1;
-    }
-    else
-    {
-        hp_list->next_hp--;
-    }
-
-    hp_list->hazard_pointers[hp_list->next_hp] = arg;
-    hp_list->next_hp++;
-    if (hp_list->next_hp == MAX_HAZARD_POINTERS)
-    {
-        hp_list->next_hp = 0;
-    }
-    FENCE;
-}
-
-void place_hazard_pointer(hp_list_t* hp_list, void* arg)
-{
-    hp_list->hazard_pointers[hp_list->next_hp] = arg;
-    hp_list->next_hp++;
-    if (hp_list->next_hp == MAX_HAZARD_POINTERS)
-    {
-        hp_list->next_hp = 0;
-    }
-    FENCE;
-}
-
-void place_list_hazard_pointer(hp_list_t* hp_list, void* arg)
-{
-    hp_list->list_hazard_pointers[hp_list->next_list_hp] = arg;
-    hp_list->next_list_hp++;
-    if (hp_list->next_list_hp == MAX_LIST_HAZARD_POINTERS)
-    {
-        hp_list->next_list_hp = 0;
-    }
+    int next = 2 * pair + hp_list->next_hp;
+    hp_list->hazard_pointers[next] = arg;
+    hp_list->next_hp = 1 - hp_list->next_hp;
     FENCE;
 }
 
@@ -84,11 +50,6 @@ static void** prepare_hazard_pointers(thread_args_t* thread_args)
         for (k = 0; k < MAX_HAZARD_POINTERS; k++)
         {
             hazard_pointers[j] = thread_args->hp_lists[i]->hazard_pointers[k];
-            j++;
-        }
-        for (k = 0; k < MAX_LIST_HAZARD_POINTERS; k++)
-        {
-            hazard_pointers[j] = thread_args->hp_lists[i]->list_hazard_pointers[k];
             j++;
         }
     }
@@ -170,9 +131,5 @@ void release_hazard_pointers(hp_list_t* hp_list)
     for (i = 0; i < MAX_HAZARD_POINTERS; i++)
     {
         hp_list->hazard_pointers[i] = NULL;
-    }
-    for (i = 0; i < MAX_LIST_HAZARD_POINTERS; i++)
-    {
-        hp_list->list_hazard_pointers[i] = NULL;
     }
 }
