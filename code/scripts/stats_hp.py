@@ -86,7 +86,7 @@ def plot_graph(c1, c2, title):
             x_label     = '#threads', 
             y_label     = 'nano seconds', 
             title       = title,
-            func_labels = ['6 hp', '5 hp'],
+            func_labels = ['6 hp', '4 hp'],
             save        = '{}.png'.format(title),
         )
 
@@ -100,6 +100,6 @@ def main(subtitle, c_1_path, c_2_path):
 
 if __name__ == '__main__':
     if len(sys.argv) != 4:
-        print('Usage: {} <subtitle> <c-6-hp-dir> <c-5-hp-dir>'.format(sys.argv[0]))
+        print('Usage: {} <subtitle> <c-6-hp-dir> <c-4-hp-dir>'.format(sys.argv[0]))
         sys.exit(1)
     main(*sys.argv[1:])
