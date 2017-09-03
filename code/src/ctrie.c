@@ -33,7 +33,6 @@ static void main_node_free(main_node_t* main_node);
  *******************/
 
 static void         clean        (inode_t* inode, int lev, thread_args_t* thread_args);
-static void         clean_parent (inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args);
 static void         compress(main_node_t **cas_address, main_node_t *old_main_node, int lev, thread_args_t *thread_args);
 static int          to_contracted(main_node_t* main_node, int lev, branch_t** old_branch, thread_args_t* thread_args);
 
@@ -485,69 +484,6 @@ static void clean(inode_t* inode, int lev, thread_args_t* thread_args)
     {
         compress(&(inode->main), old_main_node, lev, thread_args);
     }
-}
-
-/**
- * Persistent cleans the related key_hash member in the CNode pointed by the parent main node.
- * @param parent: parent node to clean its child.
- * @param inode: child of parent.
- * @param key_hash: a hash of the key to be cleaned.
- * @param lev: hash level.
- * @param thread_args: the thread arguments.
- * @todo this function may fail...
- */
-static void clean_parent(inode_t* parent, inode_t* inode, int key_hash, int lev, thread_args_t* thread_args)
-{
-    main_node_t* parent_main_node   = parent->main;
-    main_node_t* main_node          = inode->main;
-    main_node_t* new_main_node      = NULL;
-
-    if (parent_main_node->type == CNODE)
-    {
-        int pos  = (key_hash >> lev) & 0x1f;
-        int flag = 1 << pos;
-        cnode_t*    parent_cnode    = &(parent_main_node->node.cnode);
-        branch_t*   branch          = parent_cnode->array[pos];
-        if (parent_cnode->bmp & flag && branch->type == INODE && &(branch->node.inode) == inode && main_node->type == TNODE) 
-        {
-            branch_t* new_branch = NULL;
-            new_main_node = cnode_update(parent_main_node, pos, main_node->node.tnode.snode.key, main_node->node.tnode.snode.value, &new_branch);
-            if (new_main_node == NULL) 
-            {
-                FAIL("Failed to update cnode");
-            }
-            branch_t* old_branch = NULL;
-            if (to_contracted(new_main_node, lev, &old_branch, thread_args) == RESTART)
-            {
-                free(new_main_node);
-                branch_free(new_branch);
-                clean_parent(parent, inode, key_hash, lev, thread_args);
-            }
-            DEBUG("to contracted 1");
-            if (!CAS(&(parent->main), parent_main_node, new_main_node))
-            {
-                free(new_main_node);
-                branch_free(new_branch);
-                clean_parent(parent, inode, key_hash, lev, thread_args);
-            }
-
-            parent_main_node->node.cnode.marked = 1;
-            inode->marked                       = 1;
-
-            FENCE;
-
-            add_to_free_list(thread_args, parent_main_node);
-            add_to_free_list(thread_args, branch);
-            add_to_free_list(thread_args, main_node);
-            if (old_branch != NULL)
-            {
-                add_to_free_list(thread_args, old_branch);
-            }
-        }
-        return;
-    }
-CLEANUP:
-    return;
 }
 
 /**
