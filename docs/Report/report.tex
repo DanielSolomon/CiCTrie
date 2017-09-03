@@ -55,7 +55,7 @@ Email: orkarni@mail.tau.ac.il}}
 	
 	We wanted to give a simple interface for using \textit{CiCTrie}\cite{cictrie} which will be as close  as possible to object oriented programming, therefore we used \textit{Object Oriented C}; The user creates a \textit{ctrie\_t*} struct using a "constructor" \textit{create\_ctrie} and uses its functions passing itself as a "self object" (such as: \texttt{ctrie->insert(\textbf{ctrie}, key, value)}). \\
 	This way we could easily port the original \textit{Scala} code from the original paper \cite{article} and from the source code of the standard library itself \cite{ctrie-scala-source-code}. \\
-	In addition, \textit{CiCTrie} supports only int keys and values, although if needed it can support any data structure as \textit{keys} and \textit{values}, without managing their memory. It can be implemented easily, if one will pass a \textit{hash} and \textit{compare} functions when calling \texttt{ctrie\_create} and all keys and values will be \texttt{void*}.
+	In addition, \textit{CiCTrie} supports only int keys and values, although if needed it can support any data structure as \textit{keys} and \textit{values}, without managing their memory. It can be implemented easily, if one will pass \textit{hash} and \textit{equals} functions when calling \texttt{ctrie\_create} and all keys and values will be \texttt{void*}.
 	
 \subsection{Basic Operations}
 	All basic operations were implemented; \texttt{insert, lookup, remove, clean, compress, to\_contracted and clean\_parent}; Where the latter one was implemented but it is not used and was later removed since this optimization does not improve the performance.
@@ -73,7 +73,7 @@ Email: orkarni@mail.tau.ac.il}}
 		\item The \textit{Inode} still points to the expected \textit{MainNode}.		
 	\end{enumerate}
 	If the race occurs the thread must \textit{RESTART} its operation. Any node that points to another node should have a \textit{marked} field for race detection, the only nodes that point to others are \textit{INode}, \textit{LNode} and \textit{CNode}. \\
-	Since \textit{marked} property must be accessible for any thread and must be up-to-date any time, after marking a node (or multiple nodes), a \textit{FENCE} operation is invoked(before the node is added to the free list. \\
+	Since \textit{marked} property must be accessible for any thread and must be up-to-date any time, after marking a node (or multiple nodes), a \textit{FENCE} operation is invoked before the node is added to the free list. \\
 	Each thread holds a fixed size free list. The size is determined by the number of threads times number of \textit{hazard pointers} that is used in the implementation (For example in our 6 \textit{hazard pointers} implementation, with 4 threads, each thread has a free list of size 24). This size is needed in order to make sure no "dead locks" will happen, since when the free list is full, a thread must free at list one member of the list before continuing its operations, therefore when getting to the free phase, it must be guaranteed that at least one member of the free list does not occur in any \textit{hazard pointers} lists of the other threads.
 	
 \subsection{Snapshot}
